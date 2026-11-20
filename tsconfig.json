@@ -5,8 +5,6 @@
     "types": ["vite/client", "node"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "allowImportingTsExtensions": true,
-    "resolveJsonModule": true,
     "jsx": "react-jsx",
     "strict": true,
     "noUncheckedIndexedAccess": true,

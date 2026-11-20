@@ -1,0 +1,72 @@
+{
+  "title": "Пятничный релиз",
+  "upcoming": ["Чужой профиль", "Бот обещал скидку", "Чистый релиз", "Подозрительная зависимость"],
+  "tickets": [
+    {
+      "id": "payment-key",
+      "title": "Ключ на виду",
+      "time": "18:00",
+      "file": "payment-widget.ts",
+      "developer": "Оплата уже работает. Успеем выпустить её сегодня?",
+      "hint": "Сравни данные, которые получает браузер, со строкой, заполняющей виджет.",
+      "summary": "Ключ остался на сервере, а покупатель по-прежнему может оплатить заказ.",
+      "preview": { "title": "Оплата заказа", "reference": "Тестовый заказ № 104", "amount": "1 240 ₽" },
+      "lines": [
+        { "id": "widget", "text": "const widget = createWidget(\"payment\");", "hint": "Создаём платёжный виджет для страницы оплаты" },
+        { "id": "shop", "text": "const shop = getPublicConfig(\"store\");", "hint": "Загружаем открытые настройки магазина" },
+        { "id": "key", "text": "const secretKey = \"sk_live_94f2a8c1...\";", "hint": "Секретный ключ оплаты — он должен храниться только на сервере" },
+        { "id": "widget-data", "text": "widget.data = { ...shop, secretKey };", "hint": "Секретный ключ попал в открытые данные виджета — его увидит любой пользователь" },
+        { "id": "form", "text": "renderForm(widget);", "hint": "Отрисовываем форму оплаты в браузере" },
+        { "id": "payment", "text": "const status = await sendPayment(widget);", "hint": "Отправляем платёжный запрос на сервер" },
+        { "id": "receipt", "text": "showReceipt(status);", "hint": "Показываем пользователю чек и статус оплаты" }
+      ],
+      "evidenceLineId": "widget-data",
+      "initialChecks": {
+        "security": { "ok": false, "detail": "Тестовый секретный ключ доступен в данных виджета." },
+        "feature": { "ok": true, "detail": "Тестовая покупка завершилась, чек получен." }
+      },
+      "patches": [
+        {
+          "id": "hide-widget-key",
+          "title": "Убрать ключ из данных виджета",
+          "detail": "Оставить ключ в клиентском файле, чтобы сохранить текущую оплату.",
+          "changes": [
+            { "id": "widget-data", "text": "widget.data = { ...shop };", "hint": "В данных виджета остались только настройки магазина" }
+          ],
+          "checks": {
+            "security": { "ok": false, "detail": "В данных виджета ключа нет, но браузер всё ещё получает файл с ключом." },
+            "feature": { "ok": true, "detail": "Тестовая покупка завершилась, чек получен." }
+          }
+        },
+        {
+          "id": "server-payment",
+          "title": "Перенести обработку платежа на сервер",
+          "detail": "Оставить ключ на сервере и передавать ему данные заказа.",
+          "changes": [
+            { "id": "key", "text": "const order = getCurrentOrder();", "hint": "Получаем данные заказа для платёжного запроса" },
+            { "id": "widget-data", "text": "widget.data = { ...shop };", "hint": "В браузер попадают только открытые настройки магазина" },
+            { "id": "payment", "text": "const status = await requestPayment(order);", "hint": "Сервер проводит платёж своим ключом и возвращает статус" }
+          ],
+          "checks": {
+            "security": { "ok": true, "detail": "В коде и данных браузера ключа нет. Он остаётся на сервере." },
+            "feature": { "ok": true, "detail": "Тестовая покупка завершилась, чек получен." }
+          }
+        },
+        {
+          "id": "pause-payment",
+          "title": "Удалить ключ и временно отключить оплату",
+          "detail": "Прекратить обработку платежей, пока серверная часть не готова.",
+          "changes": [
+            { "id": "key", "text": "const paymentEnabled = false;", "hint": "Временно отключаем оплату" },
+            { "id": "widget-data", "text": "widget.data = { ...shop, paymentEnabled };", "hint": "Виджет получает настройки и статус доступности оплаты" },
+            { "id": "payment", "text": "const status = \"disabled\";", "hint": "Вместо платёжного запроса возвращаем статус отключения" }
+          ],
+          "checks": {
+            "security": { "ok": true, "detail": "Секретного ключа в браузере больше нет." },
+            "feature": { "ok": false, "detail": "Оплата отключена: покупатель не может завершить заказ." }
+          }
+        }
+      ]
+    }
+  ]
+}

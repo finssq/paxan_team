@@ -1,22 +1,11 @@
-import { CircleAlert, CircleCheck, Clock3, Code2, Play, Save, UserRound } from "lucide-react"
-import { useState } from "react"
+import { CircleAlert, CircleCheck, Clock3, Code2, Play, Smartphone, UserRound } from "lucide-react"
+import { lazy, Suspense, useEffect, useState } from "react"
 import sponsorLogo from "./centr-invest.svg"
-import { paymentPreview } from "./data/paymentPreview"
+import { chapter, paymentPreview, paymentTicket } from "./data/paymentPreview"
 import workLabMark from "./favicon.svg"
-import { Card } from "./ui"
+import { Card, CodeSource } from "./ui"
 
-function PreviewSource({ text, hidden }: { text: string; hidden?: boolean }) {
-  const parts = text.split(/("(?:[^"\\]|\\.)*"|\b(?:const|await)\b|\b[A-Za-z_$][\w$]*(?=\())/)
-  return (
-    <code aria-hidden={hidden}>
-      {parts.map((part, index) => {
-        if (index % 2 === 0) return part
-        const kind = part.startsWith('"') ? "string" : part === "const" || part === "await" ? "keyword" : "call"
-        return <span className={`preview-token-${kind}`} key={index}>{part}</span>
-      })}
-    </code>
-  )
-}
+const ReviewDesk = lazy(() => import("./game/ReviewDesk"))
 
 function CodePreview() {
   const [activeHint, setActiveHint] = useState<number | null>(null)
@@ -78,8 +67,8 @@ function CodePreview() {
                   >
                     <span className="preview-line-number">{number}</span>
                     <span className="preview-source">
-                      <PreviewSource text={line.text} hidden={Boolean(fix)} />
-                      {line.repair && <PreviewSource text={line.repair.text} hidden={!fix} />}
+                      <CodeSource text={line.text} hidden={Boolean(fix)} />
+                      {line.repair && <CodeSource text={line.repair.text} hidden={!fix} />}
                     </span>
                     {line.repair && <StatusIcon className="preview-line-icon" size={17} aria-hidden="true" />}
                   </button>
@@ -101,7 +90,30 @@ function CodePreview() {
   )
 }
 
+function isGameRoute() {
+  return window.location.hash === "#game" || window.location.hash === "#desk"
+}
+
 export function App() {
+  const [playing, setPlaying] = useState(isGameRoute)
+
+  useEffect(() => {
+    function followRoute() {
+      const hash = window.location.hash
+      setPlaying(isGameRoute())
+      if (hash !== "#main" && hash !== "#desk") window.scrollTo(0, 0)
+    }
+
+    window.addEventListener("hashchange", followRoute)
+    return () => window.removeEventListener("hashchange", followRoute)
+  }, [])
+
+  if (playing) return (
+    <Suspense fallback={<main className="shell" aria-busy="true">Открываем рабочий стол…</main>}>
+      <ReviewDesk chapter={chapter} ticket={paymentTicket} />
+    </Suspense>
+  )
+
   return (
     <div className="site">
       <a className="skip-link" href="#main">К основному содержанию</a>
@@ -112,7 +124,7 @@ export function App() {
           </a>
           <nav className="main-nav" aria-label="Навигация">
             <button type="button" aria-current="page" disabled>Главная</button>
-            <button className="nav-play" type="button" disabled>Играть</button>
+            <a className="nav-play" href="#game">Играть</a>
           </nav>
         </div>
       </header>
@@ -129,12 +141,12 @@ export function App() {
             </h1>
             <p>Браузерная игра о кибербезопасности. Проведи смену в роли инженера по безопасности приложений.</p>
             <div className="hero-actions">
-              <button className="hero-start" type="button" disabled><Play size={19} /> Начать играть</button>
+              <a className="hero-start" href="#game"><Play size={19} aria-hidden="true" /> Начать играть</a>
             </div>
             <ul className="hero-meta" aria-label="О смене" role="list">
               <li><UserRound size={14} aria-hidden="true" /> Без регистрации</li>
               <li><Clock3 size={14} aria-hidden="true" /> 5–7 минут</li>
-              <li><Save size={14} aria-hidden="true" /> Прогресс сохраняется</li>
+              <li><Smartphone size={14} aria-hidden="true" /> ПК и телефон</li>
             </ul>
           </div>
           <CodePreview />

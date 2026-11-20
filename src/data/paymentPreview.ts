@@ -1,29 +1,25 @@
-type PreviewLine = {
-  text: string
-  hint: string
-  repair?: { text: string; hint: string }
-}
+import chapterData from "./chapter1.json"
+import type { Chapter } from "../types/game"
+
+export const chapter: Chapter = chapterData
+const firstTicket = chapter.tickets[0]
+if (!firstTicket) throw new Error("The first chapter requires a ticket")
+
+export const paymentTicket = firstTicket
 
 export const paymentPreview = {
-  feature: "payment-widget.ts",
+  feature: paymentTicket.file,
   audit: "ИИ: угроз не найдено",
   prompt: "Наведите или нажмите на строку, чтобы расшифровать код",
   warning: "Секретный ключ оплаты виден в браузере",
   success: "Данные изолированы • Безопасно",
-  lines: [
-    { text: 'const widget = createWidget("payment");', hint: "Создаём платёжный виджет для страницы оплаты" },
-    { text: 'const shop = getPublicConfig("store");', hint: "Загружаем открытые настройки магазина" },
-    { text: 'const secretKey = "sk_live_94f2a8c1...";', hint: "Секретный ключ оплаты — он должен храниться только на сервере" },
-    {
-      text: "widget.data = { ...shop, secretKey };",
-      hint: "Секретный ключ попал в открытые данные виджета — его увидит любой пользователь",
-      repair: {
+  lines: paymentTicket.lines.map(line => ({
+    ...line,
+    repair: line.id === paymentTicket.evidenceLineId
+      ? {
         text: "widget.data = { ...shop };",
         hint: "В браузер попадают только открытые данные. Служебные остаются на сервере.",
-      },
-    },
-    { text: "renderForm(widget);", hint: "Отрисовываем форму оплаты в браузере" },
-    { text: "const status = await sendPayment(widget);", hint: "Отправляем платёжный запрос на сервер" },
-    { text: "showReceipt(status);", hint: "Показываем пользователю чек и статус оплаты" },
-  ] satisfies PreviewLine[],
+      }
+      : undefined,
+  })),
 }

@@ -60,7 +60,7 @@ svg { flex-shrink: 0; }
 .header-brand img { flex-shrink: 0; }
 .header-brand:hover { color: var(--accent); }
 .main-nav { display: flex; gap: 14px; }
-.main-nav button {
+.main-nav button, .main-nav .nav-play {
   position: relative;
   display: inline-flex;
   align-items: center;

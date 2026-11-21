@@ -201,7 +201,7 @@ export function FridayBrief({ phase, run, waveNumber, waveCount, practice, scena
         </button>
         {onSkip && <button type="button" className="friday-skip-link" data-event-sound onClick={onSkip}>Пропустить обучение</button>}
       </div>
-      {outcome && <a className="os-secondary friday-home" href="./">На главную</a>}
+      {outcome && <a className="os-secondary friday-home" href={finalReport ? "#game" : "./"}>{finalReport ? "К выбору игр" : "На главную"}</a>}
     </dialog>
   )
 }

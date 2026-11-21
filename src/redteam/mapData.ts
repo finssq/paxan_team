@@ -7,6 +7,15 @@ export const gate: Rect = { x: 728, y: 316, w: 12, h: 92 }
 export const gateApproach: Point = { x: 712, y: 362 }
 export const core: Point = { x: 864, y: 360 }
 
+export const pickups = [
+  { id: "emp_cell", x: 83, y: 204, label: "Батарея EMP", score: 150, popup: "+1 EMP!" },
+  { id: "staff_badge", x: 407, y: 192, label: "Пропуск сотрудника", score: 150, popup: "ПРОПУСК: ТРЕВОГА -35%" },
+  { id: "usb_office", x: 252, y: 111, label: "Забытая флешка", score: 300, popup: "ФЛЕШКА +300!" },
+  { id: "usb_server", x: 907, y: 460, label: "Резервный бэкап", score: 300, popup: "БЭКАП +300!" },
+] as const
+
+export type PickupId = (typeof pickups)[number]["id"]
+
 export const walls: Rect[] = [
   { x: 16, y: 16, w: 928, h: 10 },
   { x: 16, y: 514, w: 928, h: 10 },
@@ -71,26 +80,26 @@ export const findings = [
     detail: "Сотрудник ушёл за кофе и оставил активную сессию банка открытой.",
     advice: "Включите автоблокировку и блокируйте экран, когда уходите.",
     short: "Ноутбук",
-    puzzle: "circuit",
+    puzzle: "laptop",
   },
   {
-    x: 580, y: 366, label: "Пароль на стикере",
-    detail: "Логин и пароль от админки приклеены прямо к краю монитора.",
-    advice: "Уберите стикер, смените пароль и храните учётные данные в менеджере паролей.",
+    x: 580, y: 366, label: "Подсказка к паролю на стикере",
+    detail: "По стикеру и личным подсказкам на столе можно угадать пароль.",
+    advice: "Смените пароль, уберите подсказки и используйте менеджер паролей.",
     short: "Стикер",
-    puzzle: "memory",
+    puzzle: "osint",
   },
   {
     x: 148, y: 437, label: "Открытый гостевой Wi-Fi",
     detail: "Гостевая сеть не отделена от внутренней инфраструктуры офиса.",
     advice: "Изолируйте гостевую сеть от внутренних систем банка.",
     short: "Гостевой Wi-Fi",
-    puzzle: "frequency",
+    puzzle: "sniffer",
   },
 ] as const
 
 export type PuzzleKind = (typeof findings)[number]["puzzle"]
-export const objectiveOrder: readonly PuzzleKind[] = ["frequency", "circuit", "memory"]
+export const objectiveOrder: readonly PuzzleKind[] = ["sniffer", "laptop", "osint"]
 
 export const cameras = [
   { x: 74, y: 78, angle: .87, swing: .57, speed: 1.48, range: 174, halfAngle: .35, phase: .45 },

@@ -64,17 +64,24 @@ const changes: Partial<Record<FeedbackEvent, Metrics>> = {
 const initialRun: Run = { security: 80, stability: 85, hint: false, flawless: true }
 const initial: Feedback = { sound: true, hadAutoDeploy: false, tutorialDismissed: false, trainingIntroSeen: false, earned: [], completed: [], streak: 0, run: initialRun }
 const soundKey = "worklab.sound.v1"
+let sessionSound = true
+let sessionSoundOnly = false
 
 export function readSoundPreference() {
   try {
+    if (sessionSoundOnly) return sessionSound
     const saved = localStorage.getItem(soundKey)
-    if (saved === "true" || saved === "false") return saved === "true"
+    if (saved === "true" || saved === "false") sessionSound = saved === "true"
   } catch {}
-  return true
+  return sessionSound
 }
 
 export function saveSoundPreference(enabled: boolean) {
-  try { localStorage.setItem(soundKey, String(enabled)) } catch {}
+  sessionSound = enabled
+  try {
+    localStorage.setItem(soundKey, String(enabled))
+    sessionSoundOnly = false
+  } catch { sessionSoundOnly = true }
 }
 const metric = (value: number) => Math.max(0, Math.min(value, 100))
 const validMetric = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 100

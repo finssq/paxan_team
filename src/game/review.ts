@@ -96,7 +96,8 @@ export function clearShift() {
   try {
     localStorage.removeItem(saveKey)
     localStorage.removeItem(legacyFeedbackKey)
-  } catch {}
+    return true
+  } catch { return false }
 }
 
 function canRelease(checks: ReviewChecks | undefined) {

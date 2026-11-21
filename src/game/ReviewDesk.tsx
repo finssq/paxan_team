@@ -9,6 +9,7 @@ import { releaseEpilogue, storyCopy, storyForWave } from "../data/story"
 import type { Packet } from "../data/friday"
 import type { Chapter, CheckResult, Ticket } from "../types/game"
 import { CodeSource } from "../ui"
+import { shuffleArray } from "../shuffleArray"
 import { initialReview, review, saveShift } from "./review"
 import type { readShift, ReviewAction, ReviewState, ReviewStep } from "./review"
 import { achievements, characters, mentorGreeting, reactions, readFeedback, readSoundPreference, recordFeedback, saveSoundPreference } from "./feedback"
@@ -262,10 +263,11 @@ function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximiz
   )
 }
 
-export default function ReviewDesk({ chapter, ticket, saved, audio, training, onStartShift, onAdvanceWave }: {
+export default function ReviewDesk({ chapter, ticket, saved, audio, training, onStartShift, onAdvanceWave, onComplete }: {
   chapter: Chapter; ticket: Ticket; saved: ReturnType<typeof readShift>; audio: ReturnType<typeof createSfx>
   training: boolean; onStartShift: (feedback: Feedback, startImmediately?: boolean) => void
   onAdvanceWave: (ticket: Ticket, feedback: Feedback) => void
+  onComplete: () => void
 }) {
   const practice = ticket.id === practiceTicket.id
   const scenario = getWaveScenario(ticket.id)
@@ -274,6 +276,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
   const [lastPracticeTip, setLastPracticeTip] = useState(-1)
   const reducedMotion = useReducedMotion()
   const [state, dispatch] = useReducer((current: ReviewState, action: ReviewAction) => review(ticket, current, action), saved?.state ?? initialReview)
+  const [patchOptions, setPatchOptions] = useState(() => shuffleArray(ticket.patches))
   const [active, setActive] = useState<DeskApp>(() => {
     if (training && state.step === "explore") return "chat"
     return state.step === "locate" || state.step === "patch" ? "code" : "browser"
@@ -806,12 +809,14 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
   function release() {
     if (review(ticket, state, { type: "release" }) === state) return
     dispatch({ type: "release" })
+    if (storyEnabled && waveNumber === ticketCount) onComplete()
     notify("Обновление выпущено", ticket.summary, "success")
     applyFeedback("release")
     if (sound) audio.play("waveWin")
   }
 
   function restart(keepShift = false) {
+    setPatchOptions(shuffleArray(ticket.patches))
     dispatch({ type: "restart" })
     setSelectedLine(null)
     setHoveredLine(null)
@@ -898,6 +903,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
   }
 
   function beginShift() {
+    setPatchOptions(shuffleArray(ticket.patches))
     onStartShift({ ...feedbackRef.current, tutorialDismissed: true })
   }
 
@@ -1098,7 +1104,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
               {showPatches && ticket.patches.length > 0 && (
                 <fieldset className="os-patches" ref={patchList}>
                   <legend>{fridayMission ? "Что отключить перед выпуском?" : "Выберите исправление"}</legend>
-                  {ticket.patches.map((option, index) => {
+                  {patchOptions.map((option, index) => {
                     const selected = option.id === state.patchId
                     const result = selected && state.checks
                       ? state.checks.security.ok && state.checks.feature.ok ? "pass" : "fail"

@@ -1,16 +1,19 @@
 import { ArrowRight, CircleAlert, CircleCheck, Code2, Gamepad2, Map, Smartphone, UserRound } from "lucide-react"
-import { lazy, Suspense, useEffect, useState } from "react"
+import { lazy, Suspense, useEffect, useRef, useState } from "react"
 import { createSfx } from "./audio/sfx"
+import { clearCampaign, emptyCampaign, readCampaign, recordRedWin, writeCampaign } from "./campaignProgress"
+import type { CampaignProgress } from "./campaignProgress"
 import MissionHub from "./components/MissionHub"
 import sponsorLogo from "./centr-invest.svg"
 import { chapter, paymentPreview } from "./data/paymentPreview"
 import { fridayChapter, incidentTicket, practiceTicket } from "./data/friday"
 import { trainingTicket } from "./data/training"
 import workLabMark from "./favicon.svg"
-import { initialReview, readShift, saveShift } from "./game/review"
+import { clearShift, initialReview, readShift, saveShift } from "./game/review"
 import { readFeedback, readSoundPreference } from "./game/feedback"
 import type { Feedback } from "./game/feedback"
 import { initialWave } from "./game/incidentWave"
+import type { Difficulty, Rank } from "./redteam/difficulty"
 import type { Ticket } from "./types/game"
 import { Card, CodeSource } from "./ui"
 
@@ -29,9 +32,14 @@ function readCurrentShift() {
   }
 }
 
-function DeskStartup({ audio }: { audio: ReturnType<typeof createSfx> }) {
+function hasReleasedFinalWave(saved: ReturnType<typeof readCurrentShift>) {
+  return saved?.state.step === "released" && saved.ticket.id === fridayChapter.tickets.at(-1)?.id
+}
+
+function DeskStartup({ audio, onComplete }: { audio: ReturnType<typeof createSfx>; onComplete: () => void }) {
   const [Desk, setDesk] = useState<typeof import("./game/ReviewDesk").default | "failed" | null>(null)
   const [saved, setSaved] = useState(readCurrentShift)
+  const [shift, setShift] = useState(0)
 
   useEffect(() => {
     const startedAt = performance.now()
@@ -59,10 +67,11 @@ function DeskStartup({ audio }: { audio: ReturnType<typeof createSfx> }) {
 
   if (Desk && Desk !== "failed") {
     const ticket = saved?.ticket ?? practiceTicket
-    return <Desk key={ticket.id} chapter={fridayChapter} ticket={ticket} saved={saved} audio={audio} training={false} onAdvanceWave={enterWave} onStartShift={(feedback, startImmediately) => {
+    return <Desk key={`${shift}:${ticket.id}`} chapter={fridayChapter} ticket={ticket} saved={saved} audio={audio} training={false} onAdvanceWave={enterWave} onComplete={onComplete} onStartShift={(feedback, startImmediately) => {
       const firstTask = incidentTicket
       const wave = startImmediately ? { ...initialWave, started: true } : undefined
       const next = { ...feedback, wave, story: undefined, hadAutoDeploy: false, completed: [], streak: 0, run: readFeedback(null, [], firstTask.id, false).run }
+      setShift(value => value + 1)
       enterWave(firstTask, next)
     }} />
   }
@@ -215,6 +224,43 @@ function getRoute() {
 export function App() {
   const [route, setRoute] = useState(getRoute)
   const [audio] = useState(() => createSfx(readSoundPreference()))
+  const [campaign, setCampaign] = useState(() => {
+    const saved = readCampaign()
+    return !saved.blueCompleted && hasReleasedFinalWave(readCurrentShift()) ? { ...saved, blueCompleted: true } : saved
+  })
+  const campaignRef = useRef(campaign)
+
+  function saveCampaign(next: CampaignProgress) {
+    campaignRef.current = next
+    setCampaign(next)
+    writeCampaign(next)
+  }
+
+  function completeBlueChapter() {
+    if (!campaignRef.current.blueCompleted) saveCampaign({ ...campaignRef.current, blueCompleted: true })
+  }
+
+  function selectDifficulty(difficulty: Difficulty) {
+    const current = campaignRef.current
+    if (current.red.difficulty !== difficulty) saveCampaign({ ...current, red: { ...current.red, difficulty } })
+  }
+
+  function completeRedChapter(result: { rank: Rank; score: number }) {
+    saveCampaign(recordRedWin(campaignRef.current, result))
+  }
+
+  function resetCampaign() {
+    const blueCleared = clearShift()
+    const campaignCleared = clearCampaign()
+    campaignRef.current = emptyCampaign
+    setCampaign(emptyCampaign)
+    return blueCleared && campaignCleared
+  }
+
+  useEffect(() => {
+    const current = campaignRef.current
+    if (current.blueCompleted && !readCampaign().blueCompleted) writeCampaign(current)
+  }, [])
 
   useEffect(() => {
     const events = ["pointerdown", "click", "keydown"] as const
@@ -238,15 +284,14 @@ export function App() {
     return () => window.removeEventListener("hashchange", followRoute)
   }, [])
 
-  if (route === "desk") return <DeskStartup audio={audio} />
+  if (route === "desk") return <DeskStartup audio={audio} onComplete={completeBlueChapter} />
   if (route === "redteam") {
     return <Suspense fallback={<main className="boot-screen" role="status">Загружаем офис…</main>}>
-      <RedTeamGame audio={audio} />
+      <RedTeamGame audio={audio} difficulty={campaign.red.difficulty} onDifficulty={selectDifficulty} onComplete={completeRedChapter} />
     </Suspense>
   }
 
   const choosingGame = route === "modules"
-  const saved = readCurrentShift()
 
   return (
     <div className="site">
@@ -262,7 +307,7 @@ export function App() {
           </nav>
         </div>
       </header>
-      {choosingGame ? <MissionHub canResume={Boolean(saved)} officePreview={<OfficeMap />} /> : <main className="shell home" id="main" tabIndex={-1}>
+      {choosingGame ? <MissionHub canResume={Boolean(readCurrentShift())} campaign={campaign} officePreview={<OfficeMap />} onReset={resetCampaign} /> : <main className="shell home" id="main" tabIndex={-1}>
         <section className="hero">
           <div className="hero-copy">
             <div className="sponsor-badge">
@@ -276,8 +321,6 @@ export function App() {
             <p>Испытай себя в кибербезопасности с обеих сторон. Останови утечку кода до релиза — или прокрадись в офис банка и вскрой его слабые места.</p>
             <div className="hero-actions">
               <a className="hero-start" href="#game">Выбрать игру <ArrowRight size={19} aria-hidden="true" /></a>
-              {saved && <a className="hero-continue" href="#desk">Продолжить: {fridayChapter.title}</a>}
-              <a className="hero-continue hero-mission-direct" href="#redteam">Миссия 2: Red Team →</a>
             </div>
             <ul className="hero-meta" aria-label="Об играх" role="list">
               <li><Gamepad2 size={14} aria-hidden="true" /> 2 игры</li>

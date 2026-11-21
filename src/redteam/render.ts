@@ -1,11 +1,11 @@
 import { cableRuns, cameras, core, desks, findings, gate, gateApproach, mapSize, racks, rooms, walls } from "./mapData"
 import type { Point, Rect } from "./mapData"
-import { activeWalls, agentRadius, clamp, empDuration, empRadius, fullTurn, nextObjective, rayDistance, scanRadius } from "./simulation"
+import { createAgentDrawing, paintCore, paintDesk, paintFindingObject, paintGateHardware, paintPickups, paintPlants, paintRackLights, paintSurveillance } from "./canvasDraw"
+import { activeWalls, clamp, empDuration, empRadius, fullTurn, nextObjective, rayDistance, scanRadius } from "./simulation"
 import type { Run, Threat } from "./simulation"
 
 const lime = "#8EE872"
 const mint = "#A7F3D0"
-const coral = "#EF4444"
 const floorColor = "#0b120e"
 const mono = "ui-monospace, Consolas, monospace"
 
@@ -56,12 +56,10 @@ function makeFloor() {
 
   ctx.fillStyle = "#121a15"
   ctx.strokeStyle = "#263a2d"
-  for (const { x, y, w, h } of desks) {
-    ctx.fillRect(x, y, w, h)
-    ctx.strokeRect(x, y, w, h)
-    ctx.strokeRect(x + 8, y + 6, 17, 9)
-    ctx.strokeRect(x + w * .5 - 9, y + h, 18, 6)
-  }
+  for (const desk of desks) paintDesk(ctx, desk)
+  paintPlants(ctx)
+  ctx.fillStyle = "#121a15"
+  ctx.strokeStyle = "#263a2d"
   for (const { x, y, w, h } of racks) {
     ctx.fillRect(x, y, w, h)
     ctx.strokeRect(x, y, w, h)
@@ -90,11 +88,25 @@ function paintThreat(ctx: CanvasRenderingContext2D, threat: Threat, drone: boole
       else ctx.lineTo(x + dx * length, y + dy * length)
     }
     ctx.closePath()
-    ctx.fillStyle = "rgba(239, 68, 68, 0.16)"
-    ctx.strokeStyle = "#ef444488"
+    const light = ctx.createRadialGradient(x, y, 0, x, y, range)
+    light.addColorStop(0, drone ? "#EF444446" : "#EF444472")
+    light.addColorStop(.52, "#EF444435")
+    light.addColorStop(1, "#EF444413")
+    ctx.fillStyle = light
+    ctx.strokeStyle = "#ef444460"
     ctx.lineWidth = 1
     ctx.fill()
     ctx.stroke()
+    if (drone) {
+      ctx.save()
+      ctx.clip()
+      const pulse = (clock * .75 + x * .01) % 1
+      circle(ctx, x, y, range * pulse)
+      ctx.globalAlpha = .65 * (1 - pulse)
+      ctx.strokeStyle = "#FF847D"
+      ctx.stroke()
+      ctx.restore()
+    }
 
     const beam = drone ? clock * 2 : angle + Math.sin(clock * 4) * halfAngle * .86
     const dx = Math.cos(beam)
@@ -106,24 +118,9 @@ function paintThreat(ctx: CanvasRenderingContext2D, threat: Threat, drone: boole
 }
 
 function paintDevice(ctx: CanvasRenderingContext2D, threat: Threat, drone: boolean, clock: number) {
-  const { x, y, angle, disabledUntil } = threat
+  const { x, y, disabledUntil } = threat
   const remaining = disabledUntil - clock
-  ctx.save()
-  ctx.translate(x, y)
-  ctx.strokeStyle = remaining > 0 ? mint : coral
-  ctx.fillStyle = "#101512"
-  ctx.lineWidth = 1.5
-  ctx.rotate(drone ? angle + Math.PI / 4 : angle)
-  if (drone) {
-    ctx.fillRect(-6, -6, 12, 12)
-    ctx.strokeRect(-6, -6, 12, 12)
-  } else {
-    ctx.fillRect(-6, -5, 13, 10)
-    ctx.strokeRect(-6, -5, 13, 10)
-    ctx.fillStyle = ctx.strokeStyle
-    ctx.fillRect(7, -3, 3, 6)
-  }
-  ctx.restore()
+  paintSurveillance(ctx, threat, drone, clock)
   if (remaining <= 0) return
 
   ctx.strokeStyle = mint
@@ -156,15 +153,8 @@ function paintFinding(ctx: CanvasRenderingContext2D, run: Run, { x, y, short, pu
     }
   }
 
-  circle(ctx, x, y, 13)
-  ctx.fillStyle = found ? "#24472c" : "#13271a"
-  ctx.strokeStyle = found || active ? lime : "#6e9a71"
-  ctx.fill()
-  ctx.stroke()
-  ctx.fillStyle = lime
+  paintFindingObject(ctx, { x, y }, puzzle, found, run.clock)
   ctx.textAlign = "center"
-  ctx.font = `bold 13px ${mono}`
-  ctx.fillText(found ? "✓" : String(index + 1).padStart(2, "0"), x, y + 4.5)
   ctx.fillStyle = found ? "#94b799" : "#d9eadb"
   ctx.font = `bold 12px ${mono}`
   ctx.fillText(short, x, y + 45)
@@ -174,28 +164,13 @@ function paintFinding(ctx: CanvasRenderingContext2D, run: Run, { x, y, short, pu
 function paintGate(ctx: CanvasRenderingContext2D, run: Run, unlocked: boolean) {
   const x = gate.x + gate.w / 2
   const y = gate.y + gate.h / 2
-  ctx.strokeStyle = unlocked ? "#8ee8726e" : coral
-  ctx.lineWidth = unlocked ? 1 : 2
-  if (unlocked) ctx.setLineDash([3, 5])
-  for (const offset of unlocked ? [0] : [-3, 3]) {
-    trace(ctx, [{ x: x + offset, y: gate.y + 3 }, { x: x + offset, y: gate.y + gate.h - 3 }])
-  }
-  ctx.setLineDash([])
+  paintGateHardware(ctx, gate, unlocked, run.clock)
   ctx.fillStyle = unlocked ? lime : "#fca5a5"
   ctx.textAlign = "right"
   ctx.font = `bold 11px ${mono}`
   ctx.fillText(unlocked ? "ШЛЮЗ ОТКРЫТ" : "ШЛЮЗ ЗАКРЫТ", x - 10, y - 19)
 
-  if (unlocked) {
-    circle(ctx, core.x, core.y, 25 + Math.sin(run.clock * 4) * 3)
-    ctx.strokeStyle = "#8ee87286"
-    ctx.stroke()
-  }
-  ctx.fillStyle = unlocked ? "#263d24" : "#17241a"
-  ctx.strokeStyle = unlocked ? lime : "#526a58"
-  ctx.fillRect(core.x - 11, core.y - 11, 22, 22)
-  ctx.strokeRect(core.x - 11, core.y - 11, 22, 22)
-  ctx.strokeRect(core.x - 6, core.y - 6, 12, 12)
+  paintCore(ctx, core, unlocked, run.clock)
   ctx.fillStyle = unlocked ? lime : "#9cb5a2"
   ctx.textAlign = "center"
   ctx.fillText("ЯДРО БАНКА", core.x, core.y + 43)
@@ -203,6 +178,7 @@ function paintGate(ctx: CanvasRenderingContext2D, run: Run, unlocked: boolean) {
 
 export function createRenderer(ctx: CanvasRenderingContext2D) {
   const floor = makeFloor()
+  const agent = createAgentDrawing()
 
   return (run: Run, displayWidth: number, touchControls: boolean) => {
     const { width, height } = ctx.canvas
@@ -219,9 +195,14 @@ export function createRenderer(ctx: CanvasRenderingContext2D) {
     ctx.fillRect(0, 0, width, height)
     ctx.setTransform(scale, 0, 0, scale, -left * scale, -top * scale)
     ctx.drawImage(floor, 0, 0, mapSize.width, mapSize.height)
+    const moving = agent.update(run)
+    agent.paintFootprints(ctx, run.visualTime)
+    paintRackLights(ctx, racks, run.clock)
 
     const obstacles = activeWalls(run)
     run.threats.forEach((threat, index) => paintThreat(ctx, threat, index >= cameras.length, run.clock, obstacles))
+    ctx.fillStyle = "rgba(0,0,0,0.35)"
+    for (const wall of walls) ctx.fillRect(wall.x + 4, wall.y + 5, wall.w, wall.h)
     ctx.fillStyle = "#25372c"
     ctx.strokeStyle = "#4c6453"
     ctx.lineWidth = 1
@@ -229,7 +210,10 @@ export function createRenderer(ctx: CanvasRenderingContext2D) {
       ctx.fillRect(wall.x, wall.y, wall.w, wall.h)
       ctx.strokeRect(wall.x + .5, wall.y + .5, wall.w - 1, wall.h - 1)
     }
+    ctx.fillStyle = "rgba(255,255,255,0.12)"
+    for (const wall of walls) ctx.fillRect(wall.x + 1, wall.y + 1, wall.w - 2, 1)
     run.threats.forEach((threat, index) => paintDevice(ctx, threat, index >= cameras.length, run.clock))
+    paintPickups(ctx, run)
     findings.forEach((finding, index) => paintFinding(ctx, run, finding, index))
 
     const unlocked = run.scanned.length === findings.length
@@ -272,36 +256,34 @@ export function createRenderer(ctx: CanvasRenderingContext2D) {
       }
     }
     for (const burst of run.bursts) {
-      const progress = clamp((run.clock - burst.at) / .85, 0, 1)
+      const progress = clamp((run.visualTime - burst.at) / .85, 0, 1)
       ctx.globalAlpha = 1 - progress
-      ctx.fillStyle = mint
       for (let index = 0; index < burst.count; index += 1) {
         const angle = index * 2.4
-        const length = progress * (17 + (index * 7) % 39)
-        ctx.fillRect(burst.x + Math.cos(angle) * length, burst.y + Math.sin(angle) * length, 3, 2)
+        const length = progress * (19 + (index * 7) % 52)
+        ctx.fillStyle = index % 3 === 0 ? lime : mint
+        ctx.fillRect(burst.x + Math.cos(angle) * length, burst.y + Math.sin(angle) * length, 3 + index % 3, 2)
       }
     }
     ctx.globalAlpha = 1
 
-    const { x, y, angle } = run.agent
-    ctx.save()
-    ctx.translate(x, y)
-    circle(ctx, 0, 0, agentRadius + 4)
-    ctx.fillStyle = "#07100b"
-    ctx.fill()
-    ctx.strokeStyle = run.exposed ? coral : "#8ee87273"
-    ctx.lineWidth = 2
-    ctx.stroke()
-    ctx.rotate(angle)
+    const { x, y } = run.agent
+    agent.paintAgent(ctx, run, moving)
+
+    ctx.textAlign = "center"
+    ctx.font = `bold 16px ${mono}`
+    ctx.lineWidth = 4
+    ctx.strokeStyle = "#08120b"
     ctx.fillStyle = lime
-    ctx.beginPath()
-    ctx.moveTo(11, 0)
-    ctx.lineTo(-6, -7)
-    ctx.lineTo(-3, 0)
-    ctx.lineTo(-6, 7)
-    ctx.closePath()
-    ctx.fill()
-    ctx.restore()
+    for (const item of run.popups) {
+      const progress = clamp((run.visualTime - item.at) / 1.45, 0, 1)
+      const popupX = clamp(item.x, left + 115, left + viewWidth - 115)
+      const popupY = clamp(item.y - 35 - progress * 47, top + 27, top + viewHeight - 25)
+      ctx.globalAlpha = Math.min(1, (1 - progress) * 2.5)
+      ctx.strokeText(item.text, popupX, popupY)
+      ctx.fillText(item.text, popupX, popupY)
+    }
+    ctx.globalAlpha = 1
 
     if (!run.moved && run.phase === "playing") {
       ctx.font = `bold 13px ${mono}`

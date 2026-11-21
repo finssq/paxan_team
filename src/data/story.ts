@@ -43,7 +43,7 @@ export const storyCopy = {
   warmup: "Разминка", protected: "Релиз защищён", attackStopped: "АТАКА ОТБИТА", player: "Вы", replies: "Быстрый ответ", replyDelay: 400,
   summaryTitle: "Итог смены", finaleTitle: "Релиз в эфире", waveSummaryTitle: "Итог волны",
   early: "Этот сервис прошёл обе проверки. Макс передаёт следующий сигнал из журналов банка.",
-  officeTeaser: "С релизом порядок. Завтра проверим офис.",
+  officeTeaser: "Атака отбита. В понедельник проверим офис и выясним, как «Призрак» узнал внутренние адреса банка.",
 }
 
 const mentorFinale: Message = {

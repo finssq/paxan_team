@@ -1,14 +1,56 @@
-import { ArrowRight, CircleAlert, CircleCheck, Clock3, Code2, LockKeyhole, Play, Smartphone, UserRound } from "lucide-react"
-import { lazy, Suspense, useEffect, useRef, useState } from "react"
+import { ArrowRight, CircleAlert, CircleCheck, Code2, LockKeyhole, Play, Smartphone, UserRound } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
 import type { FormEvent } from "react"
+import { createSfx } from "./audio/sfx"
 import sponsorLogo from "./centr-invest.svg"
 import { chapter, paymentPreview, paymentTicket } from "./data/paymentPreview"
 import workLabMark from "./favicon.svg"
+import type { Difficulty } from "./types/game"
 import { Card, CodeSource } from "./ui"
 
-const ReviewDesk = lazy(() => import("./game/ReviewDesk"))
 const nicknameKey = "worklab.nickname.v1"
 const nicknameLimit = 32
+const difficultyKey = "worklab.difficulty.v1"
+const bootDuration = 1400
+
+function DeskStartup({ audio, difficulty }: { audio: ReturnType<typeof createSfx>; difficulty: Difficulty }) {
+  const [Desk, setDesk] = useState<typeof import("./game/ReviewDesk").default | "failed" | null>(null)
+
+  useEffect(() => {
+    const startedAt = performance.now()
+    let active = true
+    let timer: number | undefined
+
+    void import("./game/ReviewDesk").then(({ default: ReviewDesk }) => {
+      if (!active) return
+      const remaining = Math.max(0, bootDuration - (performance.now() - startedAt))
+      timer = window.setTimeout(() => setDesk(() => ReviewDesk), remaining)
+    }, () => {
+      if (active) setDesk("failed")
+    })
+
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [])
+
+  if (Desk && Desk !== "failed") return <Desk chapter={chapter} ticket={paymentTicket} audio={audio} difficulty={difficulty} />
+
+  return (
+    <main className="boot-screen">
+      <img className="boot-logo" src={workLabMark} width={60} height={60} alt="WorkLab" />
+      {Desk === "failed" ? (
+        <div className="boot-recovery">
+          <p role="alert">Не удалось запустить WorkOS.</p>
+          <button type="button" onClick={() => window.location.reload()}>Повторить</button>
+        </div>
+      ) : (
+        <div className="boot-progress" role="progressbar" aria-label="Запуск WorkOS" />
+      )}
+    </main>
+  )
+}
 
 function loadNickname() {
   try {
@@ -101,7 +143,7 @@ function CodePreview() {
   )
 }
 
-function DifficultySelection() {
+function DifficultySelection({ onStart }: { onStart: (difficulty: Difficulty) => void }) {
   const heading = useRef<HTMLHeadingElement>(null)
   const [nickname, setNickname] = useState(loadNickname)
 
@@ -116,7 +158,7 @@ function DifficultySelection() {
       if (playerName) window.localStorage.setItem(nicknameKey, playerName)
       else window.localStorage.removeItem(nicknameKey)
     } catch {}
-    window.location.hash = "#desk"
+    onStart("intern")
   }
 
   return (
@@ -160,6 +202,16 @@ function getRoute() {
 
 export function App() {
   const [route, setRoute] = useState(getRoute)
+  const [audio] = useState(createSfx)
+  const [difficulty, setDifficulty] = useState<Difficulty>(() => {
+    try {
+      const saved = window.localStorage.getItem(difficultyKey)
+      if (saved === "medium" || saved === "hard") return saved
+    } catch {}
+    return "intern"
+  })
+
+  useEffect(() => () => audio.close(), [audio])
 
   useEffect(() => {
     function followRoute() {
@@ -171,11 +223,14 @@ export function App() {
     return () => window.removeEventListener("hashchange", followRoute)
   }, [])
 
-  if (route === "desk") return (
-    <Suspense fallback={<main className="shell" aria-busy="true">Открываем рабочий стол…</main>}>
-      <ReviewDesk chapter={chapter} ticket={paymentTicket} />
-    </Suspense>
-  )
+  function startDesk(level: Difficulty) {
+    audio.unlock()
+    setDifficulty(level)
+    try { window.localStorage.setItem(difficultyKey, level) } catch {}
+    window.location.hash = "#desk"
+  }
+
+  if (route === "desk") return <DeskStartup audio={audio} difficulty={difficulty} />
 
   const choosingDifficulty = route === "difficulty"
 
@@ -188,14 +243,12 @@ export function App() {
             <img src={workLabMark} alt="" width={22} height={22} /> WorkLab
           </a>
           <nav className="main-nav" aria-label="Навигация">
-            {choosingDifficulty
-              ? <a href="./">Главная</a>
-              : <button type="button" aria-current="page" disabled>Главная</button>}
-            <a className="nav-play" href="#game" aria-current={choosingDifficulty ? "page" : undefined}>Играть</a>
+            <a href="#home" aria-current={choosingDifficulty ? undefined : "page"}>Главная</a>
+            <a href="#game" aria-current={choosingDifficulty ? "page" : undefined}>Играть</a>
           </nav>
         </div>
       </header>
-      {choosingDifficulty ? <DifficultySelection /> : <main className="shell home" id="main" tabIndex={-1}>
+      {choosingDifficulty ? <DifficultySelection onStart={startDesk} /> : <main className="shell home" id="main" tabIndex={-1}>
         <section className="hero">
           <div className="hero-copy">
             <div className="sponsor-badge">
@@ -212,7 +265,6 @@ export function App() {
             </div>
             <ul className="hero-meta" aria-label="О смене" role="list">
               <li><UserRound size={14} aria-hidden="true" /> Без регистрации</li>
-              <li><Clock3 size={14} aria-hidden="true" /> 5–7 минут</li>
               <li><Smartphone size={14} aria-hidden="true" /> ПК и телефон</li>
             </ul>
           </div>

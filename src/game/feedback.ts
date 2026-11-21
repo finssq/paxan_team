@@ -16,9 +16,14 @@ export type Mood = "smile" | "alarmed" | "shocked" | "calm" | "guiding" | "appro
 export type Message = { author: keyof typeof characters; mood: Mood; text: string }
 
 export const mentorGreeting: Message = { author: "mentor", mood: "calm", text: "Сначала проверка, потом аплодисменты. Если застрянешь, подскажу, куда смотреть." }
+export const tutorialComplete: Message = {
+  author: "mentor", mood: "approve",
+  text: "Отлично, принцип ты понял. Дальше работаешь сам — если застрянешь, жми «Спросить Макса».",
+}
 
 export const reactions = {
   discovery: { author: "developer", mood: "alarmed", text: "Ключ в браузере?! Нейронка же сказала, что всё чисто! Успеем поправить?" },
+  evidence: { author: "mentor", mood: "guiding", text: "Улика на месте. Теперь выбери исправление и проверь, что покупатель всё ещё может заплатить." },
   security: { author: "developer", mood: "alarmed", text: "Я думал, нейронка разрулила! Проверка всё ещё видит ключ. Времени в обрез!!" },
   feature: { author: "developer", mood: "shocked", text: "Прод горит!! Оплата сломалась, чек не приходит. Нам это ещё показывать!" },
   clean: { author: "mentor", mood: "approve", text: "Обе проверки зелёные. Теперь у тебя есть основания выпускать обновление." },
@@ -38,6 +43,7 @@ type Metrics = { security: number; stability: number }
 type Run = Metrics & { hint: boolean; flawless: boolean }
 export type Feedback = {
   sound: boolean
+  tutorialDismissed: boolean
   earned: Achievement[]
   completed: string[]
   streak: number
@@ -52,7 +58,7 @@ const changes: Partial<Record<FeedbackEvent, Metrics>> = {
   clean: { security: 10, stability: 10 },
 }
 const initialRun: Run = { security: 80, stability: 85, hint: false, flawless: true }
-const initial: Feedback = { sound: false, earned: [], completed: [], streak: 0, run: initialRun }
+const initial: Feedback = { sound: false, tutorialDismissed: false, earned: [], completed: [], streak: 0, run: initialRun }
 const metric = (value: number) => Math.max(0, Math.min(value, 100))
 const validMetric = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 100
 
@@ -69,6 +75,8 @@ export function readFeedback(saved: string | null, ticketIds: string[], task: st
     const run = data.run
     return {
       sound: data.sound === true,
+      tutorialDismissed: typeof data.tutorialDismissed === "boolean"
+        ? data.tutorialDismissed : completed.includes(ticketIds[0] ?? ""),
       earned,
       completed,
       streak: Number.isInteger(data.streak) && data.streak >= 0 && data.streak <= completed.length ? data.streak : 0,

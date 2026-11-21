@@ -1,15 +1,16 @@
 import { Check, CircleAlert, CircleCheck, Clock3, Code2, FlaskConical, Lightbulb, LockKeyhole, MessageSquare, Minus, RotateCcw, ShieldCheck, Square, Stamp, Trophy, WalletCards, X } from "lucide-react"
 import { animate, AnimatePresence, motion, MotionConfig, useReducedMotion } from "motion/react"
-import { useEffect, useReducer, useRef, useState } from "react"
+import { useCallback, useEffect, useReducer, useRef, useState } from "react"
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react"
-import { createSfx } from "../audio/sfx"
-import type { Chapter, CheckResult, Ticket } from "../types/game"
+import type { createSfx } from "../audio/sfx"
+import type { Chapter, CheckResult, Difficulty, Ticket } from "../types/game"
 import { CodeSource } from "../ui"
 import { initialReview, restoreReview, review, serializeReview } from "./review"
-import type { ReviewAction, ReviewState } from "./review"
-import { achievements, characters, mentorGreeting, reactions, readFeedback, recordFeedback } from "./feedback"
+import type { ReviewAction, ReviewState, ReviewStep } from "./review"
+import { achievements, characters, mentorGreeting, reactions, readFeedback, recordFeedback, tutorialComplete } from "./feedback"
 import type { FeedbackEvent, Message } from "./feedback"
-import { DockIcon, Portrait, Quest } from "./FeedbackUI"
+import { AchievementList, DockIcon, Portrait, Quest, QuickHelp, TutorialHint } from "./FeedbackUI"
+import type { TutorialStep } from "./FeedbackUI"
 import "./review.css"
 
 const apps = [
@@ -19,16 +20,18 @@ const apps = [
 ] as const
 
 type DeskApp = typeof apps[number]["id"]
-type DockPanel = "vault" | "tickets"
+type DockPanel = "vault" | "tickets" | "achievements"
 type Notice = { id: number; title: string; detail: string; tone: "info" | "warn" | "success" | "achievement" }
 type ChatMessage = Message & { sentAt: Date }
+type IncomingMessage = Message & { announce?: boolean }
+type TutorialTarget = "browser" | "code" | "patches" | "code-footer" | "vault" | "dock-code" | "dock-browser" | "dock-vault"
 
 const saveKey = "worklab.review.v1"
 const feedbackKey = "worklab.feedback.v1"
-const developerNoticeTitle = `${characters.developer.name} · WorkChat`
 const spring = { type: "spring", stiffness: 360, damping: 31 } as const
 const clockFormat = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
 const compactLayout = "(width < 841px), (height < 501px) and (width < 1025px)"
+const tutorialSteps: Record<ReviewStep, TutorialStep | null> = { explore: 1, locate: 2, patch: 3, retest: 4, stamp: 4, released: null }
 const resizeEdges = ["n", "ne", "e", "se", "s", "sw", "w", "nw"] as const
 type WindowEdge = typeof resizeEdges[number]
 type WindowFrame = { x: number; y: number; width: number; height: number }
@@ -37,11 +40,13 @@ function getWindowScroller(body: HTMLElement) {
   return window.matchMedia(compactLayout).matches ? body.parentElement ?? body : body
 }
 
-function openingMessages(ticket: Ticket, includeHint = false): ChatMessage[] {
-  const sentAt = new Date()
-  const messages: Message[] = [{ author: "developer", mood: "smile", text: ticket.developer }, mentorGreeting]
+function openingMessages(ticket: Ticket, includeHint = false): IncomingMessage[] {
+  const messages: IncomingMessage[] = [
+    { author: "developer", mood: "smile", text: ticket.developer, announce: true },
+    mentorGreeting,
+  ]
   if (includeHint) messages.push({ author: "mentor", mood: "guiding", text: ticket.hint })
-  return messages.map(message => ({ ...message, sentAt }))
+  return messages
 }
 
 function clamp(value: number, low: number, high: number) {
@@ -239,7 +244,9 @@ function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximiz
   )
 }
 
-export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; ticket: Ticket }) {
+export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
+  chapter: Chapter; ticket: Ticket; audio: ReturnType<typeof createSfx>; difficulty: Difficulty
+}) {
   const reducedMotion = useReducedMotion()
   const [state, dispatch] = useReducer((current: ReviewState, action: ReviewAction) => review(ticket, current, action), ticket, loadReview)
   const [active, setActive] = useState<DeskApp>(() => state.step === "locate" || state.step === "patch" ? "code" : "browser")
@@ -247,11 +254,13 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
   const [maximized, setMaximized] = useState<DeskApp | null>(null)
   const [stack, setStack] = useState<DeskApp[]>(() => apps.map(app => app.id).filter(id => id !== active).concat(active))
   const [dockPanel, setDockPanel] = useState<DockPanel | null>(null)
+  const [compact, setCompact] = useState(() => window.matchMedia(compactLayout).matches)
+  const [vaultVisited, setVaultVisited] = useState(false)
   const [browserTab, setBrowserTab] = useState<"preview" | "checks">(() => state.checks ? "checks" : "preview")
   const [paymentTried, setPaymentTried] = useState(false)
   const [selectedLine, setSelectedLine] = useState(() => state.evidenceId ?? null)
   const [hoveredLine, setHoveredLine] = useState<string | null>(null)
-  const [unread, setUnread] = useState(true)
+  const [unread, setUnread] = useState(false)
   const [feedback, setFeedback] = useState(() => {
     const ids = chapter.tickets.map(item => item.id)
     try {
@@ -262,16 +271,15 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
     }
   })
   const feedbackRef = useRef(feedback)
-  const [messages, setMessages] = useState(() => openingMessages(ticket, feedback.run.hint))
-  const [incoming, setIncoming] = useState<Message[]>([])
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [incoming, setIncoming] = useState(() => openingMessages(ticket, feedback.run.hint))
   const [shake, setShake] = useState(0)
-  const [notices, setNotices] = useState<Notice[]>([{ id: 0, title: developerNoticeTitle, detail: ticket.developer, tone: "info" }])
+  const [notices, setNotices] = useState<Notice[]>([])
   const notice = notices[0]
   const typing = incoming[0]
   const mentorAsked = feedback.run.hint
   const sound = feedback.sound
   const noticeId = useRef(0)
-  const [audio] = useState(createSfx)
   const activeRef = useRef(active)
   const desk = useRef<HTMLElement>(null)
   const editorBody = useRef<HTMLDivElement>(null)
@@ -280,6 +288,7 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
   const chatBody = useRef<HTMLDivElement>(null)
   const dock = useRef<HTMLElement>(null)
   const popover = useRef<HTMLElement>(null)
+  const dockPanelTitle = dockPanel === "tickets" ? chapter.title : dockPanel === "vault" ? "Сейф секретов" : "Ачивки"
   const released = state.step === "released"
   const ticketCount = chapter.tickets.length + chapter.upcoming.length
   const completed = new Set([...feedback.completed, ...(released ? [ticket.id] : [])])
@@ -290,11 +299,64 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
   const explanation = lines.find(line => line.id === activeLine)?.hint
   const evidenceWrong = state.step === "locate" && Boolean(state.evidenceId)
   const showPatches = state.step === "patch" || state.step === "retest" || state.step === "stamp"
+  const canRepeatTutorial = difficulty === "intern" && chapter.tickets[0]?.id === ticket.id
+  const isTutorialActive = canRepeatTutorial && !feedback.tutorialDismissed && !released
+  const tutorialStep = isTutorialActive ? tutorialSteps[state.step] : null
+  const tutorialTarget = getTutorialTarget()
+  const dockHint = tutorialTarget?.startsWith("dock-") && !dockPanel
+
+  function canSeeApp(app: DeskApp) {
+    return !hidden.includes(app) && (!maximized || maximized === app) && (!compact || active === app)
+  }
+
+  function getTutorialTarget(): TutorialTarget | null {
+    if (!tutorialStep) return null
+    const codeVisible = canSeeApp("code")
+    const browserVisible = canSeeApp("browser")
+    switch (tutorialStep) {
+      case 1: return browserVisible ? "browser" : "dock-browser"
+      case 2: return codeVisible ? "code" : browserVisible ? "browser" : "dock-code"
+      case 3: {
+        if (dockPanel === "vault") return "vault"
+        if (!vaultVisited) return "dock-vault"
+        return codeVisible ? "patches" : "dock-code"
+      }
+      case 4: {
+        if (state.step === "retest" && state.checks && active === "code" && codeVisible) return "patches"
+        if (browserVisible) return "browser"
+        return codeVisible ? "code-footer" : "dock-browser"
+      }
+    }
+  }
+
+  function tutorialAttrs(target: TutorialTarget) {
+    if (tutorialTarget !== target) return {}
+    return {
+      "data-tutorial-target": target,
+      "aria-describedby": !target.startsWith("dock-") || dockHint ? "workos-tutorial-hint" : undefined,
+    }
+  }
+
+  function renderTutorial(target: TutorialTarget) {
+    return tutorialTarget === target && tutorialStep !== null && <TutorialHint step={tutorialStep} onSkip={skipTutorial} />
+  }
+
+  const notify = useCallback((title: string, detail: string, tone: Notice["tone"] = "info") => {
+    const item = { id: ++noticeId.current, title, detail, tone }
+    setNotices(queue => [...queue, item])
+  }, [])
 
   useEffect(() => {
     desk.current?.focus({ preventScroll: true })
-    return () => audio.close()
-  }, [audio])
+  }, [])
+
+  useEffect(() => {
+    const layout = window.matchMedia(compactLayout)
+    const syncLayout = () => setCompact(layout.matches)
+    syncLayout()
+    layout.addEventListener("change", syncLayout)
+    return () => layout.removeEventListener("change", syncLayout)
+  }, [])
 
   useEffect(() => {
     try {
@@ -315,7 +377,7 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
 
   useEffect(() => {
     if (!notice) return
-    if (notice.tone === "achievement" && feedbackRef.current.sound) audio.play("success")
+    if (notice.tone === "achievement") audio.play("success")
     const timeout = window.setTimeout(() => setNotices(queue => queue.slice(1)), notice.tone === "achievement" ? 3500 : 2300)
     return () => window.clearTimeout(timeout)
   }, [notice, audio])
@@ -323,14 +385,18 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
   useEffect(() => {
     if (!typing) return
     const timeout = window.setTimeout(() => {
-      const message = { ...typing, sentAt: new Date() }
+      const { announce, ...line } = typing
+      const message = { ...line, sentAt: new Date() }
       setMessages(history => [...history, message])
       setIncoming(queue => queue.slice(1))
-      if (activeRef.current !== "chat") setUnread(true)
-      if (feedbackRef.current.sound) audio.play("message")
-    }, 540)
+      if (activeRef.current !== "chat") {
+        setUnread(true)
+        if (announce) notify(`${characters[message.author].name} · WorkChat`, message.text)
+      }
+      audio.play("message")
+    }, Math.min(1150, 500 + typing.text.length * 6))
     return () => window.clearTimeout(timeout)
-  }, [typing, audio])
+  }, [typing, audio, notify])
 
   useEffect(() => {
     if (active !== "chat" || !chatBody.current) return
@@ -358,11 +424,6 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
     window.addEventListener("pointerdown", dismiss)
     return () => window.removeEventListener("pointerdown", dismiss)
   }, [dockPanel])
-
-  function notify(title: string, detail: string, tone: Notice["tone"] = "info") {
-    const item = { id: ++noticeId.current, title, detail, tone }
-    setNotices(queue => [...queue, item])
-  }
 
   function applyFeedback(event: FeedbackEvent) {
     const previous = feedbackRef.current
@@ -443,6 +504,10 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
     dispatch({ type: "release" })
     notify("Обновление выпущено", ticket.summary, "success")
     applyFeedback("release")
+    if (isTutorialActive) {
+      skipTutorial()
+      setIncoming(queue => [...queue, tutorialComplete])
+    }
     if (sound) audio.play("stamp")
   }
 
@@ -451,14 +516,13 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
     setSelectedLine(null)
     setHoveredLine(null)
     applyFeedback("restart")
-    setMessages(openingMessages(ticket))
-    setIncoming([])
+    setMessages([])
+    setIncoming(openingMessages(ticket))
     setNotices([])
-    setUnread(true)
+    setUnread(false)
     setBrowserTab("preview")
     setPaymentTried(false)
     openApp("browser")
-    notify(developerNoticeTitle, ticket.developer)
   }
 
   function askMentor() {
@@ -467,8 +531,26 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
     setIncoming(queue => [...queue, { author: "mentor", mood: "guiding", text: ticket.hint }])
   }
 
+  function setTutorialDismissed(tutorialDismissed: boolean) {
+    const next = { ...feedbackRef.current, tutorialDismissed }
+    feedbackRef.current = next
+    setFeedback(next)
+  }
+
+  function skipTutorial() {
+    setTutorialDismissed(true)
+  }
+
+  function repeatTutorial() {
+    if (!canRepeatTutorial) return
+    setVaultVisited(false)
+    setTutorialDismissed(false)
+    if (released) restart()
+  }
+
   function toggleDockPanel(panel: DockPanel) {
     if (sound) audio.play("click")
+    if (panel === "vault" && dockPanel !== panel && tutorialStep === 3) setVaultVisited(true)
     setDockPanel(current => current === panel ? null : panel)
   }
 
@@ -509,8 +591,8 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
   return (
     <MotionConfig reducedMotion="user">
       <div className="workos"
-        onPointerDownCapture={() => { if (sound) audio.unlock() }}
-        onKeyDownCapture={() => { if (sound) audio.unlock() }}
+        onClickCapture={audio.unlock}
+        onKeyDownCapture={audio.unlock}
         onKeyDown={event => { if (event.key === "Escape") { closeDockPanel(); setNotices(queue => queue.slice(1)) } }}>
         <a className="skip-link" href="#desk">К рабочему столу</a>
         <header className="os-menu">
@@ -521,13 +603,19 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
             </svg><span>WorkLab</span>
           </a>
           <Quest step={state.step} />
-          <DeskClock />
+          <div className="os-menu-tools">
+            <DeskClock />
+            <QuickHelp canRepeat={canRepeatTutorial} onRepeat={repeatTutorial} />
+          </div>
         </header>
         <div className="os-notifications" aria-live="polite">
           <AnimatePresence mode="wait">
-            {notice && <motion.aside key={notice.id} className="os-toast" data-tone={notice.tone} initial={reducedMotion ? false : { opacity: 0, x: 26 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 16 }} transition={reducedMotion ? { duration: 0 } : spring}>
+            {notice && <motion.aside key={notice.id} className="os-toast" data-tone={notice.tone} initial={reducedMotion ? false : { x: 26 }} animate={{ x: 0 }} exit={{ x: 16 }} transition={reducedMotion ? { duration: 0 } : spring}>
               <span className="os-toast-icon">{notice.tone === "achievement" ? <Trophy size={19} aria-hidden="true" /> : notice.tone === "warn" ? <CircleAlert size={19} aria-hidden="true" /> : notice.tone === "success" ? <CircleCheck size={19} aria-hidden="true" /> : <MessageSquare size={19} aria-hidden="true" />}</span>
-              <div><strong>{notice.title}</strong><p>{notice.detail}</p></div>
+              <div>
+                {notice.tone === "achievement" && <span className="os-toast-achievement">Ачивка открыта</span>}
+                <strong>{notice.title}</strong><p>{notice.detail}</p>
+              </div>
               <button type="button" className="os-icon-button" aria-label="Закрыть уведомление" onClick={() => setNotices(queue => queue.slice(1))}><X size={15} aria-hidden="true" /></button>
             </motion.aside>}
           </AnimatePresence>
@@ -540,7 +628,8 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
               <span className="os-audit">ИИ: угроз не найдено</span>
             </div>
             <div className="os-window-scroll os-editor-scroll" ref={editorBody}>
-              <div className="preview-code os-code">
+              {renderTutorial("code")}
+              <div className="preview-code os-code" {...tutorialAttrs("code")}>
                 {lines.map((line, index) => {
                   const marked = state.evidenceId === line.id
                   const detected = state.step === "locate" && Boolean(state.checks && !state.checks.security.ok) && selectedLine === line.id
@@ -571,8 +660,9 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
                 })}
               </div>
               {showPatches && ticket.patches.length > 0 && (
-                <fieldset className="os-patches" ref={patchList}>
+                <fieldset className="os-patches" ref={patchList} {...tutorialAttrs("patches")}>
                   <legend>Выберите исправление</legend>
+                  {renderTutorial("patches")}
                   {ticket.patches.map(option => (
                     <label className="os-patch" key={option.id}>
                       <input type="radio" name="review-patch" checked={option.id === state.patchId} onChange={() => {
@@ -587,17 +677,21 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
               )}
             </div>
             <footer className="os-window-footer os-code-footer">
+              {renderTutorial("code-footer")}
               <p className="os-explanation">{explanation ?? "Наведите или нажмите на строку, чтобы прочитать пояснение."}</p>
               {state.step === "locate" && <div className="os-evidence-actions">
                 {evidenceWrong && <p className="os-evidence-error" role="status">Эта строка не объясняет утечку. Выберите другую.</p>}
                 <motion.button type="button" className="os-primary" whileTap={reducedMotion ? undefined : { scale: .96 }} disabled={!selectedLine} onClick={() => {
                   if (!selectedLine) return
                   dispatch({ type: "mark", lineId: selectedLine })
-                  if (selectedLine === ticket.evidenceLineId) openCode()
+                  if (selectedLine === ticket.evidenceLineId) {
+                    applyFeedback("evidence")
+                    openCode()
+                  }
                 }}><Check size={16} aria-hidden="true" /> Отметить улику</motion.button>
               </div>}
               {state.step === "patch" && <p role="status">Улика подтверждена. Выберите исправление.</p>}
-              {(state.step === "retest" || state.step === "stamp") && <button type="button" className="os-secondary" onClick={() => { setBrowserTab("checks"); openApp("browser") }}>К проверкам в браузере</button>}
+              {(state.step === "retest" || state.step === "stamp") && <button type="button" className="os-secondary" {...tutorialAttrs("code-footer")} onClick={() => { setBrowserTab("checks"); openApp("browser") }}>К проверкам в браузере</button>}
             </footer>
           </AppWindow>
 
@@ -641,9 +735,10 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
                 <CheckTile label="Работа функции" result={state.checks?.feature} />
               </div>
             </div>
-            <footer className="os-window-footer os-browser-footer">
+            <footer className="os-window-footer os-browser-footer" data-has-tutorial={tutorialTarget === "browser" || undefined}>
+              {renderTutorial("browser")}
               {browserInstruction && <p>{browserInstruction}</p>}
-              <motion.button type="button" className="os-primary" whileTap={reducedMotion ? undefined : { scale: .96 }} transition={spring} onClick={browserAction.run}><ActionIcon size={17} aria-hidden="true" /> {browserAction.label}</motion.button>
+              <motion.button type="button" className="os-primary" {...tutorialAttrs("browser")} whileTap={reducedMotion ? undefined : { scale: .96 }} transition={spring} onClick={browserAction.run}><ActionIcon size={17} aria-hidden="true" /> {browserAction.label}</motion.button>
             </footer>
           </AppWindow>
 
@@ -662,7 +757,12 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
                   </div>
                 </article>
               ))}
-              {typing && <p className="os-typing"><span aria-hidden="true">•••</span> {characters[typing.author].name} печатает…</p>}
+              {typing && (
+                <p className="os-typing">
+                  <span className="os-typing-dots" aria-hidden="true"><i /><i /><i /></span>
+                  {characters[typing.author].name} печатает…
+                </p>
+              )}
             </div>
             <footer className="os-window-footer os-chat-footer">
               <motion.button type="button" className="os-secondary" whileHover={mentorAsked ? undefined : { y: -1 }} transition={spring} disabled={mentorAsked} onClick={askMentor}><Lightbulb size={16} aria-hidden="true" /> {mentorAsked ? "Подсказка в чате" : "Спросить Макса"}</motion.button>
@@ -671,35 +771,45 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
         </main>
 
         <div className="os-dock-area">
+          {dockHint && tutorialStep !== null && <TutorialHint step={tutorialStep} onSkip={skipTutorial} atDock />}
           {dockPanel && (
             <section className="os-popover" ref={popover} tabIndex={-1} aria-labelledby="workos-popover-title">
-              <header><h2 id="workos-popover-title">{dockPanel === "tickets" ? chapter.title : "Сейф секретов"}</h2><button type="button" className="os-icon-button" aria-label="Закрыть панель" onClick={closeDockPanel}><X size={17} aria-hidden="true" /></button></header>
+              <header><h2 id="workos-popover-title">{dockPanelTitle}</h2><button type="button" className="os-icon-button" aria-label="Закрыть панель" onClick={closeDockPanel}><X size={17} aria-hidden="true" /></button></header>
               {dockPanel === "tickets" ? <>
                 <p className="os-ticket-progress">Выпущено: {completed.size} из {ticketCount}</p>
                 <ol className="os-ticket-list">
                   {chapter.tickets.map(item => <li key={item.id}><button type="button" onClick={() => openApp("browser")}>{item.title}<span>{completed.has(item.id) ? "Выпущена" : "В работе"}</span></button></li>)}
                   {chapter.upcoming.map(title => <li key={title}><span>{title}</span><small>Скоро</small></li>)}
                 </ol>
-              </> : <div className="os-vault">
+              </> : dockPanel === "vault" ? <div className="os-vault">
                 <span className="os-vault-icon"><LockKeyhole size={20} aria-hidden="true" /></span>
                 <p>Служебные ключи хранятся на сервере. Песочница проверяет, доступны ли они браузеру.</p>
-                <button type="button" className="os-secondary" onClick={() => { setBrowserTab("checks"); openApp("browser") }}>Открыть проверку ключа</button>
-              </div>}
+                {renderTutorial("vault")}
+                {tutorialTarget === "vault"
+                  ? <button type="button" className="os-secondary" {...tutorialAttrs("vault")} onClick={openCode}>К исправлению в WorkCode</button>
+                  : <button type="button" className="os-secondary" onClick={() => { setBrowserTab("checks"); openApp("browser") }}>Открыть проверку ключа</button>}
+              </div> : <AchievementList earned={feedback.earned} />}
             </section>
           )}
           <nav className="os-dock" ref={dock} aria-label="Приложения WorkOS">
             {apps.map(app => {
               const isOpen = !hidden.includes(app.id)
               return (
-                <motion.button key={app.id} type="button" className="os-dock-item" data-app={app.id} data-open={isOpen} aria-label={app.label} aria-controls={`workos-${app.id}`} aria-pressed={isOpen && active === app.id} onClick={() => openApp(app.id)} whileTap={{ scale: .95 }} transition={spring}>
+                <motion.button key={app.id} type="button" className="os-dock-item" data-app={app.id} data-open={isOpen}
+                  {...(app.id === "chat" ? {} : tutorialAttrs(`dock-${app.id}`))}
+                  aria-label={app.label} aria-controls={`workos-${app.id}`} aria-pressed={isOpen && active === app.id} onClick={() => openApp(app.id)} whileTap={{ scale: .95 }} transition={spring}>
                   <DockIcon app={app.id} />
                   {app.id === "chat" && unread && <span className="os-unread" aria-label="Одно непрочитанное сообщение">1</span>}
                 </motion.button>
               )
             })}
             <span className="os-dock-divider" aria-hidden="true" />
-            <motion.button type="button" className="os-dock-item" data-app="vault" aria-label="Сейф секретов" aria-expanded={dockPanel === "vault"} onClick={() => toggleDockPanel("vault")} whileTap={{ scale: .95 }} transition={spring}><DockIcon app="vault" /></motion.button>
+            <motion.button type="button" className="os-dock-item" data-app="vault" {...tutorialAttrs("dock-vault")} aria-label="Сейф секретов" aria-expanded={dockPanel === "vault"} onClick={() => toggleDockPanel("vault")} whileTap={{ scale: .95 }} transition={spring}><DockIcon app="vault" /></motion.button>
             <motion.button type="button" className="os-dock-item" data-app="tickets" aria-label="Задачи" aria-expanded={dockPanel === "tickets"} onClick={() => toggleDockPanel("tickets")} whileTap={{ scale: .95 }} transition={spring}><DockIcon app="tickets" /></motion.button>
+            <motion.button type="button" className="os-dock-item" data-app="achievements" aria-label="Достижения"
+              aria-expanded={dockPanel === "achievements"} onClick={() => toggleDockPanel("achievements")} whileTap={{ scale: .95 }} transition={spring}>
+              <DockIcon app="achievements" />
+            </motion.button>
           </nav>
         </div>
 

@@ -1,10 +1,14 @@
-import { ArrowRight, CircleAlert, CircleCheck, Code2, LockKeyhole, Play, Smartphone, UserRound } from "lucide-react"
+import { ArrowRight, CircleAlert, CircleCheck, Code2, Flame, Play, RotateCcw, Smartphone, Sprout, UserRound, Zap } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import type { FormEvent } from "react"
 import { createSfx } from "./audio/sfx"
 import sponsorLogo from "./centr-invest.svg"
 import { chapter, paymentPreview, paymentTicket } from "./data/paymentPreview"
+import { fridayChapter, incidentTicket } from "./data/friday"
+import { trainingTicket } from "./data/training"
 import workLabMark from "./favicon.svg"
+import { clearShift, initialReview, readShift, saveShift } from "./game/review"
+import { readFeedback } from "./game/feedback"
 import type { Difficulty } from "./types/game"
 import { Card, CodeSource } from "./ui"
 
@@ -12,9 +16,39 @@ const nicknameKey = "worklab.nickname.v1"
 const nicknameLimit = 32
 const difficultyKey = "worklab.difficulty.v1"
 const bootDuration = 1400
+const difficultyOptions = {
+  intern: { label: "Простой", icon: Sprout },
+  medium: { label: "Средний", icon: Zap },
+  hard: { label: "Сложный", icon: Flame },
+} satisfies Record<Difficulty, { label: string; icon: typeof Sprout }>
+
+function parseDifficulty(value: string | null): Difficulty {
+  return value === "medium" || value === "hard" ? value : "intern"
+}
+
+function loadDifficulty(): Difficulty {
+  try {
+    return parseDifficulty(localStorage.getItem(difficultyKey))
+  } catch {}
+  return "intern"
+}
+
+function readCurrentShift(difficulty: Difficulty) {
+  const saved = difficulty === "medium"
+    ? readShift(fridayChapter, trainingTicket, ["friday-profile", "friday-transfer", "friday-traffic"]) : readShift(chapter, trainingTicket)
+  if (saved || difficulty !== "medium") return saved
+  const previous = readShift(chapter)
+  return previous && {
+    ticket: incidentTicket,
+    state: initialReview,
+    feedback: { ...readFeedback(null, [], incidentTicket.id, false), sound: previous.feedback.sound },
+  }
+}
 
 function DeskStartup({ audio, difficulty }: { audio: ReturnType<typeof createSfx>; difficulty: Difficulty }) {
   const [Desk, setDesk] = useState<typeof import("./game/ReviewDesk").default | "failed" | null>(null)
+  const [saved, setSaved] = useState(() => readCurrentShift(difficulty))
+  const activeChapter = difficulty === "medium" ? fridayChapter : chapter
 
   useEffect(() => {
     const startedAt = performance.now()
@@ -35,7 +69,15 @@ function DeskStartup({ audio, difficulty }: { audio: ReturnType<typeof createSfx
     }
   }, [])
 
-  if (Desk && Desk !== "failed") return <Desk chapter={chapter} ticket={paymentTicket} audio={audio} difficulty={difficulty} />
+  if (Desk && Desk !== "failed") {
+    const ticket = saved?.ticket ?? trainingTicket
+    const training = ticket.id === trainingTicket.id
+    return <Desk key={ticket.id} chapter={activeChapter} ticket={ticket} saved={saved} audio={audio} training={training} difficultyLabel={difficultyOptions[difficulty].label} onStartShift={feedback => {
+      const firstTask = difficulty === "medium" ? incidentTicket : paymentTicket
+      saveShift(firstTask, initialReview, feedback)
+      setSaved({ ticket: firstTask, state: initialReview, feedback })
+    }} />
+  }
 
   return (
     <main className="boot-screen">
@@ -153,12 +195,14 @@ function DifficultySelection({ onStart }: { onStart: (difficulty: Difficulty) =>
 
   function startGame(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    const submitter = (event.nativeEvent as SubmitEvent).submitter
+    const difficulty = parseDifficulty(submitter instanceof HTMLButtonElement ? submitter.value : null)
     const playerName = nickname.trim()
     try {
       if (playerName) window.localStorage.setItem(nicknameKey, playerName)
       else window.localStorage.removeItem(nicknameKey)
     } catch {}
-    onStart("intern")
+    onStart(difficulty)
   }
 
   return (
@@ -171,20 +215,11 @@ function DifficultySelection({ onStart }: { onStart: (difficulty: Difficulty) =>
             onChange={event => setNickname(event.target.value)} />
         </label>
         <div className="difficulty-options">
-          <button className="difficulty-option surface" type="submit" aria-labelledby="easy-title" aria-describedby="easy-description">
-            <span>
-              <span id="easy-title" className="difficulty-label">Простой</span>
-              <span id="easy-description" className="difficulty-description">Макс поможет разобраться с задачами первой смены.</span>
-            </span>
-            <ArrowRight size={22} aria-hidden="true" />
-          </button>
-          {["Средний", "Сложный"].map(label => (
-            <button key={label} className="difficulty-option surface" type="button" disabled>
-              <span>
-                <span className="difficulty-label">{label}</span>
-                <span className="difficulty-status" aria-hidden="true">Пока недоступен</span>
-              </span>
-              <LockKeyhole size={20} aria-hidden="true" />
+          {Object.entries(difficultyOptions).map(([level, { label, icon: Icon }]) => (
+            <button key={level} className="difficulty-option surface" type="submit" value={level}>
+              <span className="difficulty-icon"><Icon size={23} aria-hidden="true" /></span>
+              <span className="difficulty-label">{label}</span>
+              <ArrowRight size={20} aria-hidden="true" />
             </button>
           ))}
         </div>
@@ -203,13 +238,7 @@ function getRoute() {
 export function App() {
   const [route, setRoute] = useState(getRoute)
   const [audio] = useState(createSfx)
-  const [difficulty, setDifficulty] = useState<Difficulty>(() => {
-    try {
-      const saved = window.localStorage.getItem(difficultyKey)
-      if (saved === "medium" || saved === "hard") return saved
-    } catch {}
-    return "intern"
-  })
+  const [difficulty, setDifficulty] = useState(loadDifficulty)
 
   useEffect(() => () => audio.close(), [audio])
 
@@ -225,6 +254,7 @@ export function App() {
 
   function startDesk(level: Difficulty) {
     audio.unlock()
+    clearShift()
     setDifficulty(level)
     try { window.localStorage.setItem(difficultyKey, level) } catch {}
     window.location.hash = "#desk"
@@ -233,6 +263,8 @@ export function App() {
   if (route === "desk") return <DeskStartup audio={audio} difficulty={difficulty} />
 
   const choosingDifficulty = route === "difficulty"
+  const saved = choosingDifficulty ? null : readCurrentShift(difficulty)
+  const activeChapter = difficulty === "medium" ? fridayChapter : chapter
 
   return (
     <div className="site">
@@ -244,7 +276,7 @@ export function App() {
           </a>
           <nav className="main-nav" aria-label="Навигация">
             <a href="#home" aria-current={choosingDifficulty ? undefined : "page"}>Главная</a>
-            <a href="#game" aria-current={choosingDifficulty ? "page" : undefined}>Играть</a>
+            <a href={saved ? "#desk" : "#game"} aria-current={choosingDifficulty ? "page" : undefined}>Играть</a>
           </nav>
         </div>
       </header>
@@ -261,7 +293,10 @@ export function App() {
             </h1>
             <p>Браузерная игра о кибербезопасности. Проведи смену в роли инженера по безопасности приложений.</p>
             <div className="hero-actions">
-              <a className="hero-start" href="#game"><Play size={19} aria-hidden="true" /> Начать играть</a>
+              {saved ? <>
+                <a className="hero-start" href="#desk" onClick={audio.unlock}><Play size={19} aria-hidden="true" /> <span>Продолжить играть <small>{saved.ticket.id === trainingTicket.id ? "Задача 0 · Обучение" : `${difficulty === "medium" ? "Волна" : "Задача"} ${activeChapter.tickets.indexOf(saved.ticket) + 1}/${activeChapter.tickets.length + activeChapter.upcoming.length}`}</small></span></a>
+                <a className="hero-restart" href="#game"><RotateCcw size={17} aria-hidden="true" /> Начать заново</a>
+              </> : <a className="hero-start" href="#game"><Play size={19} aria-hidden="true" /> Начать играть</a>}
             </div>
             <ul className="hero-meta" aria-label="О смене" role="list">
               <li><UserRound size={14} aria-hidden="true" /> Без регистрации</li>

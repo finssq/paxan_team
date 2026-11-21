@@ -1,16 +1,24 @@
-import { Check, CircleAlert, CircleCheck, Clock3, Code2, FlaskConical, Lightbulb, LockKeyhole, MessageSquare, Minus, RotateCcw, ShieldCheck, Square, Stamp, Trophy, WalletCards, X } from "lucide-react"
+import { Check, CircleAlert, CircleCheck, Clock3, Code2, FlaskConical, KeyRound, Lightbulb, LockKeyhole, MessageSquare, Minus, RotateCcw, ScanLine, Server, ShieldCheck, Snowflake, Square, Stamp, Trophy, Volume2, VolumeX, WalletCards, X } from "lucide-react"
 import { animate, AnimatePresence, motion, MotionConfig, useReducedMotion } from "motion/react"
 import { useCallback, useEffect, useReducer, useRef, useState } from "react"
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react"
 import type { createSfx } from "../audio/sfx"
-import type { Chapter, CheckResult, Difficulty, Ticket } from "../types/game"
+import { trainingChat, trainingKey, trainingLeakExplanation } from "../data/training"
+import { friday, fridayChapter, incidentPackets, incidentTicket, packetRuns } from "../data/friday"
+import { storyCopy, storyForWave } from "../data/story"
+import type { Packet } from "../data/friday"
+import type { Chapter, CheckResult, Ticket } from "../types/game"
 import { CodeSource } from "../ui"
-import { initialReview, restoreReview, review, serializeReview } from "./review"
-import type { ReviewAction, ReviewState, ReviewStep } from "./review"
-import { achievements, characters, mentorGreeting, reactions, readFeedback, recordFeedback, tutorialComplete } from "./feedback"
-import type { FeedbackEvent, Message } from "./feedback"
-import { AchievementList, DockIcon, Portrait, Quest, QuickHelp, TutorialHint } from "./FeedbackUI"
+import { initialReview, review, saveShift } from "./review"
+import type { readShift, ReviewAction, ReviewState, ReviewStep } from "./review"
+import { achievements, characters, mentorGreeting, reactions, readFeedback, recordFeedback } from "./feedback"
+import type { Feedback, FeedbackEvent, Message } from "./feedback"
+import { AchievementList, DockIcon, HighlightedText, Portrait, Quest, QuickHelp, SkipTutorialButton, TrainingComplete, TrainingTeam, TutorialHint } from "./FeedbackUI"
 import type { TutorialStep } from "./FeedbackUI"
+import { AllowedHosts, FridayBrief, FridayHud } from "./FridayUI"
+import type { WavePhase } from "./FridayUI"
+import { initialWave } from "./incidentWave"
+import { TrafficIntercept } from "./TrafficIntercept"
 import "./review.css"
 
 const apps = [
@@ -23,15 +31,15 @@ type DeskApp = typeof apps[number]["id"]
 type DockPanel = "vault" | "tickets" | "achievements"
 type Notice = { id: number; title: string; detail: string; tone: "info" | "warn" | "success" | "achievement" }
 type ChatMessage = Message & { sentAt: Date }
+type StoryChatMessage = ChatMessage | { author: "player"; text: string; sentAt: Date }
 type IncomingMessage = Message & { announce?: boolean }
-type TutorialTarget = "browser" | "code" | "patches" | "code-footer" | "vault" | "dock-code" | "dock-browser" | "dock-vault"
+type TutorialTarget = "browser" | "code" | "code-footer" | "vault" | "dock-code" | "dock-browser" | "dock-vault"
 
-const saveKey = "worklab.review.v1"
-const feedbackKey = "worklab.feedback.v1"
 const spring = { type: "spring", stiffness: 360, damping: 31 } as const
 const clockFormat = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
 const compactLayout = "(width < 841px), (height < 501px) and (width < 1025px)"
-const tutorialSteps: Record<ReviewStep, TutorialStep | null> = { explore: 1, locate: 2, patch: 3, retest: 4, stamp: 4, released: null }
+const tutorialSteps: Record<ReviewStep, TutorialStep | null> = { explore: 1, locate: 2, patch: 3, retest: 4, stamp: 5, released: null }
+const orderTransitMs = 620
 const resizeEdges = ["n", "ne", "e", "se", "s", "sw", "w", "nw"] as const
 type WindowEdge = typeof resizeEdges[number]
 type WindowFrame = { x: number; y: number; width: number; height: number }
@@ -71,14 +79,6 @@ function resizeFrame(frame: WindowFrame, edge: WindowEdge, dx: number, dy: numbe
   return { x, y, width: nextRight - x, height: nextBottom - y }
 }
 
-function loadReview(ticket: Ticket) {
-  try {
-    return restoreReview(ticket, window.localStorage.getItem(saveKey))
-  } catch {
-    return initialReview
-  }
-}
-
 function checkStatus(result: CheckResult | undefined) {
   return !result ? "pending" : result.ok ? "pass" : "fail"
 }
@@ -106,7 +106,7 @@ function DeskClock() {
   return <time className="os-clock" dateTime={time}>{time}</time>
 }
 
-function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximize, restore, shake = 0, children }: {
+function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximize, restore, onSkip, shake = 0, children }: {
   app: typeof apps[number]
   layer: number
   active: boolean
@@ -116,6 +116,7 @@ function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximiz
   hide: () => void
   maximize: () => void
   restore: () => void
+  onSkip?: () => void
   shake?: number
   children: ReactNode
 }) {
@@ -209,6 +210,7 @@ function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximiz
     >
       <header
         className="os-window-bar"
+        data-training-skip={Boolean(onSkip) || undefined}
         onPointerDown={event => {
           if (!(event.target instanceof Element && event.target.closest("button"))) startGesture(event, "move")
         }}
@@ -235,6 +237,7 @@ function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximiz
           <button type="button" className="os-light os-light-expand" aria-label={maximized ? `Восстановить размер ${app.name}` : `Развернуть ${app.name}`} title={maximized ? "Восстановить размер" : "Развернуть окно"} onClick={maximize}><Square size={10} aria-hidden="true" /></button>
           <button type="button" className="os-light os-light-close" aria-label={`Закрыть ${app.name}`} title="Закрыть окно" onClick={hide}><X size={12} aria-hidden="true" /></button>
         </div>
+        {onSkip && <div className="os-window-training-actions"><SkipTutorialButton onSkip={onSkip} /></div>}
       </header>
       {children}
       {resizeEdges.map(edge => (
@@ -244,39 +247,44 @@ function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximiz
   )
 }
 
-export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
-  chapter: Chapter; ticket: Ticket; audio: ReturnType<typeof createSfx>; difficulty: Difficulty
+export default function ReviewDesk({ chapter, ticket, saved, audio, training, difficultyLabel, onStartShift }: {
+  chapter: Chapter; ticket: Ticket; saved: ReturnType<typeof readShift>; audio: ReturnType<typeof createSfx>
+  training: boolean; difficultyLabel: string; onStartShift: (feedback: Feedback) => void
 }) {
+  const fridayMission = ticket.id === incidentTicket.id
   const reducedMotion = useReducedMotion()
-  const [state, dispatch] = useReducer((current: ReviewState, action: ReviewAction) => review(ticket, current, action), ticket, loadReview)
-  const [active, setActive] = useState<DeskApp>(() => state.step === "locate" || state.step === "patch" ? "code" : "browser")
-  const [hidden, setHidden] = useState<DeskApp[]>([])
+  const [state, dispatch] = useReducer((current: ReviewState, action: ReviewAction) => review(ticket, current, action), saved?.state ?? initialReview)
+  const [active, setActive] = useState<DeskApp>(() => {
+    if (training && state.step === "explore") return "chat"
+    return state.step === "locate" || state.step === "patch" ? "code" : "browser"
+  })
+  const [hidden, setHidden] = useState<DeskApp[]>(() => training ? apps.filter(app => app.id !== active).map(app => app.id) : [])
   const [maximized, setMaximized] = useState<DeskApp | null>(null)
   const [stack, setStack] = useState<DeskApp[]>(() => apps.map(app => app.id).filter(id => id !== active).concat(active))
   const [dockPanel, setDockPanel] = useState<DockPanel | null>(null)
   const [compact, setCompact] = useState(() => window.matchMedia(compactLayout).matches)
-  const [vaultVisited, setVaultVisited] = useState(false)
+  const [keyInVault, setKeyInVault] = useState(false)
   const [browserTab, setBrowserTab] = useState<"preview" | "checks">(() => state.checks ? "checks" : "preview")
   const [paymentTried, setPaymentTried] = useState(false)
+  const [wavePaused, setWavePaused] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [sendingOrder, setSendingOrder] = useState(false)
+  const sendTimer = useRef<number | undefined>(undefined)
   const [selectedLine, setSelectedLine] = useState(() => state.evidenceId ?? null)
-  const [hoveredLine, setHoveredLine] = useState<string | null>(null)
+  const [hoveredLine, setHoveredLine] = useState<{ id: string; above: boolean } | null>(null)
   const [unread, setUnread] = useState(false)
-  const [feedback, setFeedback] = useState(() => {
-    const ids = chapter.tickets.map(item => item.id)
-    try {
-      return readFeedback(window.localStorage.getItem(feedbackKey), ids, ticket.id,
-        state.step !== "explore" || !window.localStorage.getItem(saveKey))
-    } catch {
-      return readFeedback(null, ids, ticket.id, false)
-    }
-  })
+  const [feedback, setFeedback] = useState(() => saved?.feedback ?? readFeedback(null, [], ticket.id, false))
   const feedbackRef = useRef(feedback)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [incoming, setIncoming] = useState(() => openingMessages(ticket, feedback.run.hint))
+  const [messages, setMessages] = useState<ChatMessage[]>(() => {
+    if (!training) return []
+    const completedSteps = (tutorialSteps[state.step] ?? trainingChat.length + 1) - 1
+    const sentAt = new Date()
+    return trainingChat.slice(0, completedSteps).flat().map(message => ({ ...message, sentAt }))
+  })
+  const [incoming, setIncoming] = useState(() => training ? [] : openingMessages(ticket, feedback.run.hint))
   const [shake, setShake] = useState(0)
   const [notices, setNotices] = useState<Notice[]>([])
   const notice = notices[0]
-  const typing = incoming[0]
   const mentorAsked = feedback.run.hint
   const sound = feedback.sound
   const noticeId = useRef(0)
@@ -288,22 +296,56 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
   const chatBody = useRef<HTMLDivElement>(null)
   const dock = useRef<HTMLElement>(null)
   const popover = useRef<HTMLElement>(null)
-  const dockPanelTitle = dockPanel === "tickets" ? chapter.title : dockPanel === "vault" ? "Сейф секретов" : "Ачивки"
+  const panelTrigger = useRef<HTMLButtonElement | null>(null)
+  const dockPanelTitle = dockPanel === "vault" ? "Сейф секретов" : "Ачивки"
   const released = state.step === "released"
+  const wave = feedback.wave ?? initialWave
+  const wavePhase: WavePhase = released ? "won" : !wave.started ? "ready"
+    : !feedback.run.security ? "lost"
+      : !wave.remainingMs ? "timeout" : wavePaused ? "paused" : "live"
+  const waveRunning = fridayMission && wavePhase === "live" && !helpOpen
+  const capturedLeak = incidentPackets.some(packet => packet.unsafe && wave.captured.includes(packet.id))
+  const canMarkIncident = capturedLeak && wave.rosterSeen && waveRunning
   const ticketCount = chapter.tickets.length + chapter.upcoming.length
+  const ticketIndex = chapter.tickets.indexOf(ticket)
+  const waveNumber = ticketIndex + 1
+  const storyEnabled = !training && chapter === fridayChapter && waveNumber > 0
+  const scene = storyForWave(waveNumber)
+  const storyRecord = storyEnabled ? feedback.story?.[ticket.id] : undefined
+  const finalReport = storyEnabled && released && waveNumber === ticketCount
+  const storyBadge = training ? { label: storyCopy.warmup, tone: "neutral" }
+    : finalReport ? { label: storyCopy.protected, tone: "success" }
+      : storyEnabled ? { label: scene.badge, tone: scene.tone } : undefined
+  const storyVisible = storyEnabled && wavePhase === "live"
+  const storyMessages = storyEnabled ? chapter.tickets.flatMap((task, index): StoryChatMessage[] => {
+    const entry = feedback.story?.[task.id]
+    if (!entry) return []
+    const taskScene = storyForWave(index + 1)
+    const chat: StoryChatMessage[] = [{ ...taskScene.opening, sentAt: new Date(entry.startedAt) }]
+    if (entry.choice !== undefined && entry.answeredAt) {
+      const answer = taskScene.answers[entry.choice]
+      chat.push({ author: "player", text: answer.label, sentAt: new Date(entry.answeredAt) })
+      if (entry.replyAt) chat.push({ ...answer.reply, sentAt: new Date(entry.replyAt) })
+    }
+    return chat
+  }) : []
+  const visibleMessages = storyEnabled ? [...messages, ...storyMessages].sort((first, second) => first.sentAt.getTime() - second.sentAt.getTime()) : messages
   const completed = new Set([...feedback.completed, ...(released ? [ticket.id] : [])])
   const patch = ticket.patches.find(option => option.id === state.patchId)
+  const vaultPatch = ticket.patches.find(option => option.id === "server-payment")
+  const keyIsolated = Boolean(vaultPatch && patch === vaultPatch)
   const paymentResult = patch?.checks.feature ?? ticket.initialChecks.feature
   const lines = ticket.lines.map(line => patch?.changes.find(change => change.id === line.id) ?? line)
-  const activeLine = hoveredLine ?? selectedLine
-  const explanation = lines.find(line => line.id === activeLine)?.hint
+  const activeLine = hoveredLine?.id ?? selectedLine
   const evidenceWrong = state.step === "locate" && Boolean(state.evidenceId)
-  const showPatches = state.step === "patch" || state.step === "retest" || state.step === "stamp"
-  const canRepeatTutorial = difficulty === "intern" && chapter.tickets[0]?.id === ticket.id
-  const isTutorialActive = canRepeatTutorial && !feedback.tutorialDismissed && !released
-  const tutorialStep = isTutorialActive ? tutorialSteps[state.step] : null
+  const showPatches = !training && (state.step === "patch" || state.step === "retest" || state.step === "stamp")
+  const tutorialStep = training ? tutorialSteps[state.step] : null
+  const showTrainingIntro = training && state.step === "explore" && !feedback.trainingIntroSeen
+  const trainingMessage: IncomingMessage | undefined = training && !showTrainingIntro
+    ? trainingChat.slice(0, tutorialStep ?? trainingChat.length).flat()[messages.length] : undefined
+  const typing = trainingMessage ?? incoming[0]
   const tutorialTarget = getTutorialTarget()
-  const dockHint = tutorialTarget?.startsWith("dock-") && !dockPanel
+  const dockHint = tutorialTarget?.startsWith("dock-") && !dockPanel && !canSeeApp("chat")
 
   function canSeeApp(app: DeskApp) {
     return !hidden.includes(app) && (!maximized || maximized === app) && (!compact || active === app)
@@ -315,14 +357,14 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
     const browserVisible = canSeeApp("browser")
     switch (tutorialStep) {
       case 1: return browserVisible ? "browser" : "dock-browser"
-      case 2: return codeVisible ? "code" : browserVisible ? "browser" : "dock-code"
+      case 2: return codeVisible ? "code" : "dock-code"
       case 3: {
         if (dockPanel === "vault") return "vault"
-        if (!vaultVisited) return "dock-vault"
-        return codeVisible ? "patches" : "dock-code"
+        return "dock-vault"
       }
-      case 4: {
-        if (state.step === "retest" && state.checks && active === "code" && codeVisible) return "patches"
+      case 4:
+      case 5: {
+        if (dockPanel === "vault") return null
         if (browserVisible) return "browser"
         return codeVisible ? "code-footer" : "dock-browser"
       }
@@ -338,7 +380,7 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
   }
 
   function renderTutorial(target: TutorialTarget) {
-    return tutorialTarget === target && tutorialStep !== null && <TutorialHint step={tutorialStep} onSkip={skipTutorial} />
+    return tutorialTarget === target && tutorialStep !== null && <TutorialHint step={tutorialStep} />
   }
 
   const notify = useCallback((title: string, detail: string, tone: Notice["tone"] = "info") => {
@@ -359,50 +401,102 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
   }, [])
 
   useEffect(() => {
-    try {
-      window.localStorage.setItem(feedbackKey, JSON.stringify({ ...feedback, version: 1, task: ticket.id }))
-    } catch {
-      return
-    }
-  }, [feedback, ticket.id])
+    saveShift(ticket, state, feedback)
+  }, [ticket, state, feedback])
 
   useEffect(() => {
-    try {
-      if (state.step === "explore") window.localStorage.removeItem(saveKey)
-      else window.localStorage.setItem(saveKey, serializeReview(ticket, state))
-    } catch {
-      return
-    }
-  }, [ticket, state])
+    if (!storyVisible || storyRecord || feedbackRef.current.story?.[ticket.id]) return
+    const current = feedbackRef.current
+    const next = { ...current, story: { ...current.story, [ticket.id]: { startedAt: Date.now() } } }
+    feedbackRef.current = next
+    setFeedback(next)
+    if (activeRef.current !== "chat") setUnread(true)
+  }, [storyVisible, storyRecord, ticket.id])
+
+  useEffect(() => {
+    if (!storyVisible || storyRecord?.choice === undefined || !storyRecord.answeredAt || storyRecord.replyAt) return
+    const timeout = window.setTimeout(() => {
+      const current = feedbackRef.current
+      const entry = current.story?.[ticket.id]
+      if (entry !== storyRecord) return
+      const next = { ...current, story: { ...current.story, [ticket.id]: { ...entry, replyAt: Date.now() } } }
+      feedbackRef.current = next
+      setFeedback(next)
+      if (current.sound) audio.play("message")
+      if (activeRef.current !== "chat") setUnread(true)
+    }, Math.max(0, Math.min(storyCopy.replyDelay, storyCopy.replyDelay - (Date.now() - storyRecord.answeredAt))))
+    return () => window.clearTimeout(timeout)
+  }, [audio, storyVisible, storyRecord, ticket.id])
+
+  useEffect(() => () => window.clearTimeout(sendTimer.current), [])
+
+  useEffect(() => {
+    if (!waveRunning) return
+    let lastTick = performance.now()
+    const interval = window.setInterval(() => {
+      const now = performance.now()
+      const elapsed = Math.floor(now - lastTick)
+      lastTick += elapsed
+      const current = feedbackRef.current
+      if (!current.wave?.remainingMs || !current.run.security) return
+      const freezeMs = Math.max(0, current.wave.freezeMs - elapsed)
+      const xrayMs = Math.max(0, current.wave.xrayMs - elapsed)
+      const remainingMs = Math.max(0, current.wave.remainingMs - Math.max(0, elapsed - current.wave.freezeMs))
+      const deployed = !remainingMs
+      const run = deployed ? { ...current.run, flawless: false, security: Math.max(0, current.run.security - friday.timeoutDamage) } : current.run
+      const next = { ...current, wave: { ...current.wave, remainingMs: deployed && run.security ? friday.retryMs : remainingMs,
+        freezeMs, xrayMs, combo: deployed ? 1 : current.wave.combo }, run }
+      feedbackRef.current = next
+      setFeedback(next)
+      if (deployed) {
+        notify("Денис выкатил баг в прод!", "−35% безопасности", "warn")
+        if (run.security) {
+          setShake(value => value + 1)
+          if (current.sound) audio.play("breach")
+        }
+      }
+    }, 200)
+    return () => window.clearInterval(interval)
+  }, [audio, notify, waveRunning])
+
+  useEffect(() => {
+    if (!fridayMission || !shake || reducedMotion || !desk.current?.parentElement) return
+    const playback = animate(desk.current.parentElement, { x: [0, -5, 5, -3, 3, 0] }, { duration: .32 })
+    return () => playback.stop()
+  }, [fridayMission, shake, reducedMotion])
+
+  useEffect(() => {
+    if (fridayMission && wavePhase === "lost" && feedbackRef.current.sound) audio.play("breach")
+  }, [audio, fridayMission, wavePhase])
 
   useEffect(() => {
     if (!notice) return
-    if (notice.tone === "achievement") audio.play("success")
+    if (sound && notice.tone === "achievement") audio.play("success")
     const timeout = window.setTimeout(() => setNotices(queue => queue.slice(1)), notice.tone === "achievement" ? 3500 : 2300)
     return () => window.clearTimeout(timeout)
-  }, [notice, audio])
+  }, [notice, audio, sound])
 
   useEffect(() => {
-    if (!typing) return
+    if (!typing || fridayMission && wavePhase === "lost") return
     const timeout = window.setTimeout(() => {
       const { announce, ...line } = typing
       const message = { ...line, sentAt: new Date() }
       setMessages(history => [...history, message])
-      setIncoming(queue => queue.slice(1))
+      if (!training) setIncoming(queue => queue.slice(1))
       if (activeRef.current !== "chat") {
         setUnread(true)
         if (announce) notify(`${characters[message.author].name} · WorkChat`, message.text)
       }
-      audio.play("message")
-    }, Math.min(1150, 500 + typing.text.length * 6))
+      if (sound) audio.play("message")
+    }, Math.min(training ? 1500 : 1150, 500 + typing.text.length * 6))
     return () => window.clearTimeout(timeout)
-  }, [typing, audio, notify])
+  }, [typing, audio, notify, sound, training, fridayMission, wavePhase])
 
   useEffect(() => {
     if (active !== "chat" || !chatBody.current) return
     const scroller = getWindowScroller(chatBody.current)
     scroller.scrollTop = scroller.scrollHeight
-  }, [messages, typing, active])
+  }, [messages, typing, active, storyRecord])
 
   useEffect(() => {
     if (active === "code" && state.step === "patch") scrollToPatches()
@@ -417,7 +511,7 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
     if (!dockPanel) return
     popover.current?.focus({ preventScroll: true })
     function dismiss(event: PointerEvent) {
-      if (event.target instanceof Node && !dock.current?.contains(event.target) && !popover.current?.contains(event.target)) {
+      if (event.target instanceof Node && !dock.current?.contains(event.target) && !popover.current?.contains(event.target) && !panelTrigger.current?.contains(event.target)) {
         setDockPanel(null)
       }
     }
@@ -426,11 +520,20 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
   }, [dockPanel])
 
   function applyFeedback(event: FeedbackEvent) {
+    if (training) return
     const previous = feedbackRef.current
     const next = recordFeedback(previous, event, ticket.id, ticketCount, Boolean(state.patchId))
+    if (fridayMission && next.wave) {
+      if (event === "feature") next.run = { ...next.run, stability: previous.run.stability }
+      if (event === "hint" || event === "feature" || event === "security") next.wave = { ...next.wave, combo: 1 }
+      if (event === "release") {
+        const combo = next.run.flawless && !next.run.hint ? Math.min(3, next.wave.combo + 1) : 1
+        next.wave = { ...next.wave, combo, score: next.wave.score + 400 + Math.floor(next.wave.remainingMs / 1000) * 5 + (combo - 1) * 200 }
+      }
+    }
     feedbackRef.current = next
     setFeedback(next)
-    if (event !== "hint" && event !== "restart") setIncoming(queue => [...queue, reactions[event]])
+    if (event !== "hint" && event !== "restart" && !fridayMission) setIncoming(queue => [...queue, reactions[event]])
     for (const id of next.earned) {
       if (!previous.earned.includes(id)) notify(achievements[id].title, achievements[id].detail, "achievement")
     }
@@ -441,12 +544,20 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
     activeRef.current = id
     setActive(id)
     setStack(current => current.at(-1) === id ? current : current.filter(item => item !== id).concat(id))
-    if (id === "chat") setUnread(false)
+    if (id === "chat") {
+      setUnread(false)
+      const current = feedbackRef.current
+      if (fridayMission && wavePhase === "live" && current.wave && !current.wave.rosterSeen) {
+        const next = { ...current, wave: { ...current.wave, rosterSeen: true } }
+        feedbackRef.current = next
+        setFeedback(next)
+      }
+    }
   }
 
   function openApp(id: DeskApp) {
     setDockPanel(null)
-    setHidden(current => current.filter(item => item !== id))
+    setHidden(current => training ? apps.filter(app => app.id !== id).map(app => app.id) : current.filter(item => item !== id))
     setMaximized(current => current === id ? current : null)
     focusApp(id)
     window.requestAnimationFrame(() => desk.current?.querySelector<HTMLElement>(`#workos-${id}`)?.focus({ preventScroll: true }))
@@ -476,8 +587,30 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
     window.requestAnimationFrame(scrollToPatches)
   }
 
+  function openTraffic() {
+    openApp("browser")
+    window.requestAnimationFrame(() => {
+      if (browserBody.current) getWindowScroller(browserBody.current).scrollTop = 0
+    })
+  }
+
+  function markEvidence(lineId: string) {
+    if (fridayMission && !canMarkIncident) return
+    dispatch({ type: "mark", lineId })
+    const current = feedbackRef.current
+    if (lineId === ticket.evidenceLineId) {
+      applyFeedback("evidence")
+      if (!training) openCode()
+    } else if (fridayMission) {
+      const next = { ...current, wave: current.wave && { ...current.wave, combo: 1 }, run: { ...current.run, flawless: false } }
+      feedbackRef.current = next
+      setFeedback(next)
+      if (sound) audio.play("warning")
+    }
+  }
+
   function closeDockPanel() {
-    if (dockPanel) dock.current?.querySelector<HTMLButtonElement>(`[data-app="${dockPanel}"]`)?.focus()
+    if (dockPanel) panelTrigger.current?.focus()
     setDockPanel(null)
   }
 
@@ -486,17 +619,94 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
     if (next === state) return
     dispatch({ type: action })
     setBrowserTab("checks")
+    if (training && activeRef.current === "browser") {
+      window.requestAnimationFrame(() => browserBody.current?.querySelector<HTMLElement>(".os-packet-result")?.focus())
+    }
     if (next.step === "stamp") {
-      notify("Обе проверки пройдены", "Обновление готово к выпуску.", "success")
+      notify("Обе проверки пройдены", fridayMission ? ticket.summary : "Обновление готово к выпуску.", "success")
       applyFeedback("clean")
       if (sound) audio.play("success")
     } else {
       notify(next.step === "locate" ? "Обнаружена уязвимость" : "Проверка не пройдена",
         next.checks?.security.ok ? next.checks.feature.detail : next.checks?.security.detail ?? "", "warn")
       applyFeedback(action === "check" ? "discovery" : next.checks?.security.ok ? "feature" : "security")
-      setShake(value => value + 1)
-      if (sound) audio.play("warning")
+      if (!fridayMission) setShake(value => value + 1)
+      if (sound && (!fridayMission || action === "retest")) audio.play("warning")
     }
+  }
+
+  function finishTrafficCheck() {
+    if (!waveRunning) return
+    if (state.step === "explore") runCheck("check")
+    if (state.step === "retest" && !state.checks) runCheck("retest")
+  }
+
+  function catchTraffic(packet: Packet) {
+    const current = feedbackRef.current
+    if (!waveRunning || !current.wave) return
+    const first = !current.earned.includes("matrix")
+    const captured = incidentPackets.some(item => item.id === packet.id) && !current.wave.captured.includes(packet.id)
+      ? [...current.wave.captured, packet.id] : current.wave.captured
+    const newPacket = incidentPackets.some(item => item.id === packet.id) && !current.wave.credited.includes(packet.id)
+    const next: Feedback = { ...current, wave: { ...current.wave, captured,
+      credited: newPacket ? [...current.wave.credited, packet.id] : current.wave.credited,
+      score: current.wave.score + (newPacket ? 100 : 0) }, earned: first ? [...current.earned, "matrix"] : current.earned }
+    feedbackRef.current = next
+    setFeedback(next)
+    if (sound) {
+      audio.play("freeze")
+      if (packet.unsafe) audio.play("breach")
+    }
+    if (first) {
+      notify(achievements.matrix.title, achievements.matrix.detail, "achievement")
+      setIncoming(queue => [...queue, { author: "developer", mood: "smile", text: "Ого, ты поймал пакет прямо в полёте!" }])
+    }
+    if (packet.unsafe || (patch?.checks.security.ok && state.step === "retest")) finishTrafficCheck()
+  }
+
+  function sendTrainingOrder(action: "check" | "retest") {
+    if (sendTimer.current !== undefined) return
+    setSendingOrder(true)
+    sendTimer.current = window.setTimeout(() => {
+      sendTimer.current = undefined
+      setSendingOrder(false)
+      runCheck(action)
+    }, reducedMotion ? 150 : orderTransitMs)
+  }
+
+  function checkKey() {
+    openApp("browser")
+    setBrowserTab("checks")
+    if (training) return
+    if (state.step === "explore") runCheck("check")
+    if (state.step === "retest" && !state.checks) runCheck("retest")
+  }
+
+  function moveKeyToVault() {
+    if (!vaultPatch) return
+    if (state.step === "explore") {
+      checkKey()
+    } else if (state.step === "locate") {
+      openCode()
+    } else {
+      choosePatch(vaultPatch.id)
+      setBrowserTab("checks")
+      openApp("browser")
+    }
+  }
+
+  function lockVault() {
+    if (!keyInVault || state.step !== "patch" || !vaultPatch) return
+    setKeyInVault(false)
+    choosePatch(vaultPatch.id)
+    setBrowserTab("checks")
+  }
+
+  function choosePatch(patchId: string) {
+    if (fridayMission && !waveRunning) return
+    dispatch({ type: "selectPatch", patchId })
+    setPaymentTried(false)
+    if (sound) audio.play("patch")
   }
 
   function release() {
@@ -504,18 +714,30 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
     dispatch({ type: "release" })
     notify("Обновление выпущено", ticket.summary, "success")
     applyFeedback("release")
-    if (isTutorialActive) {
-      skipTutorial()
-      setIncoming(queue => [...queue, tutorialComplete])
-    }
     if (sound) audio.play("stamp")
   }
 
-  function restart() {
+  function restart(keepShift = false) {
     dispatch({ type: "restart" })
     setSelectedLine(null)
     setHoveredLine(null)
     applyFeedback("restart")
+    if (fridayMission) {
+      const current = feedbackRef.current
+      const savedWave = current.wave
+      const resumed = keepShift && savedWave ? {
+        score: savedWave.score, credited: savedWave.credited, xrayCharges: savedWave.xrayCharges, freezeCharges: savedWave.freezeCharges,
+      } : {}
+      const next = { ...current, wave: { ...initialWave, ...resumed, started: true },
+        run: keepShift ? { ...current.run, security: 40 } : current.run,
+        story: keepShift ? current.story : undefined,
+        earned: keepShift ? current.earned : [], completed: current.completed.filter(id => id !== ticket.id), streak: 0 }
+      feedbackRef.current = next
+      setFeedback(next)
+      setWavePaused(false)
+      setHelpOpen(false)
+      setShake(0)
+    }
     setMessages([])
     setIncoming(openingMessages(ticket))
     setNotices([])
@@ -525,32 +747,69 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
     openApp("browser")
   }
 
+  function advanceWave() {
+    if (wavePhase === "paused") {
+      setWavePaused(false)
+    } else if (wavePhase === "ready") {
+      const next = { ...feedbackRef.current, wave: { ...initialWave, started: true } }
+      feedbackRef.current = next
+      setFeedback(next)
+      openApp("browser")
+      if (sound) audio.play("warning")
+    } else {
+      restart(wavePhase === "lost")
+    }
+  }
+
+  function useAbility(ability: "xray" | "freeze") {
+    const current = feedbackRef.current
+    const wave = current.wave
+    if (!waveRunning || !wave) return
+    if (ability === "xray" && (!wave.xrayCharges || wave.xrayMs || !ticket.evidenceLineId || state.evidenceId === ticket.evidenceLineId)) return
+    if (ability === "freeze" && (!wave.freezeCharges || wave.freezeMs)) return
+    const next = { ...current, wave: ability === "xray"
+      ? { ...wave, xrayCharges: wave.xrayCharges - 1, xrayMs: friday.xrayMs }
+      : { ...wave, freezeCharges: wave.freezeCharges - 1, freezeMs: friday.freezeMs } }
+    feedbackRef.current = next
+    setFeedback(next)
+    if (current.sound) audio.play(ability === "freeze" ? "freeze" : "click")
+    if (ability === "xray") window.requestAnimationFrame(() => editorBody.current?.querySelector("[data-xray]")?.scrollIntoView({ block: "nearest" }))
+  }
+
   function askMentor() {
     if (feedbackRef.current.run.hint) return
     applyFeedback("hint")
     setIncoming(queue => [...queue, { author: "mentor", mood: "guiding", text: ticket.hint }])
   }
 
-  function setTutorialDismissed(tutorialDismissed: boolean) {
-    const next = { ...feedbackRef.current, tutorialDismissed }
+  function answerStory(choice: 0 | 1) {
+    const current = feedbackRef.current
+    const entry = current.story?.[ticket.id]
+    if (!storyVisible || !entry || entry.choice !== undefined) return
+    const next = { ...current, story: { ...current.story, [ticket.id]: { ...entry, choice, answeredAt: Date.now() } } }
     feedbackRef.current = next
     setFeedback(next)
   }
 
-  function skipTutorial() {
-    setTutorialDismissed(true)
+  function beginShift() {
+    onStartShift({ ...feedbackRef.current, tutorialDismissed: true })
   }
 
-  function repeatTutorial() {
-    if (!canRepeatTutorial) return
-    setVaultVisited(false)
-    setTutorialDismissed(false)
-    if (released) restart()
+  function openTrainingChat() {
+    const next = { ...feedbackRef.current, trainingIntroSeen: true }
+    feedbackRef.current = next
+    setFeedback(next)
   }
 
-  function toggleDockPanel(panel: DockPanel) {
+  function toggleSound() {
+    const next = { ...feedbackRef.current, sound: !feedbackRef.current.sound }
+    feedbackRef.current = next
+    setFeedback(next)
+  }
+
+  function toggleDockPanel(panel: DockPanel, trigger: HTMLButtonElement) {
+    panelTrigger.current = trigger
     if (sound) audio.play("click")
-    if (panel === "vault" && dockPanel !== panel && tutorialStep === 3) setVaultVisited(true)
     setDockPanel(current => current === panel ? null : panel)
   }
 
@@ -561,6 +820,7 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
       active: active === app.id,
       hidden: hidden.includes(app.id),
       maximized: maximized === app.id,
+      onSkip: training && !released ? beginShift : undefined,
       focus: () => focusApp(app.id),
       hide: () => hideApp(app.id),
       restore: () => setMaximized(current => current === app.id ? null : current),
@@ -572,16 +832,18 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
   }
 
   const browserAction = {
-    explore: { label: "Запустить проверки", run: () => runCheck("check") },
-    locate: { label: "Открыть код", run: openCode },
-    patch: { label: "Выбрать исправление", run: openCode },
+    explore: { label: training ? "Провести тестовую оплату" : "Запустить проверки", run: () => training ? sendTrainingOrder("check") : runCheck("check") },
+    locate: { label: training ? "Открыть WorkCode" : "Открыть код", run: openCode },
+    patch: training ? { label: "Открыть сейф", run: () => setDockPanel("vault") } : { label: "Выбрать исправление", run: openCode },
     retest: state.checks
       ? { label: "Выбрать другой патч", run: openCode }
-      : { label: "Перепроверить", run: () => runCheck("retest") },
+      : { label: training ? "Перепроверить оплату" : "Перепроверить", run: () => training ? sendTrainingOrder("retest") : runCheck("retest") },
     stamp: { label: "В ПРОДАКШН", run: release },
-    released: { label: "Пройти задачу заново", run: restart },
+    released: training ? { label: "Начать смену", run: beginShift } : { label: "Пройти задачу заново", run: () => restart() },
   }[state.step]
-  const ActionIcon = state.step === "stamp" ? Stamp : released ? RotateCcw : state.step === "locate" || state.step === "patch" ? Code2 : ShieldCheck
+  const trainingAction = training && (state.step === "explore" || state.step === "retest" || state.step === "stamp")
+  const ActionIcon = training && state.step === "explore" ? WalletCards : state.step === "stamp" ? Stamp
+    : released ? RotateCcw : state.step === "locate" || state.step === "patch" ? Code2 : ShieldCheck
   const browserInstruction = state.step === "locate"
     ? "В коде отметьте строку, которая объясняет утечку."
     : state.step === "explore" ? "Проверьте безопасность и работу оплаты."
@@ -590,7 +852,9 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
 
   return (
     <MotionConfig reducedMotion="user">
-      <div className="workos"
+      <div className="workos" data-training={training || undefined} data-friday={fridayMission || undefined}
+        data-frost={fridayMission && wave.freezeMs > 0 && wavePhase === "live" || undefined}
+        data-game-over={fridayMission && wavePhase === "lost" || undefined}
         onClickCapture={audio.unlock}
         onKeyDownCapture={audio.unlock}
         onKeyDown={event => { if (event.key === "Escape") { closeDockPanel(); setNotices(queue => queue.slice(1)) } }}>
@@ -602,12 +866,38 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
               <path d="m6 8 4 4-4 4m7 0h5" fill="none" stroke="var(--os-dark)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
             </svg><span>WorkLab</span>
           </a>
-          <Quest step={state.step} />
+          {storyBadge ? <div className="os-quest os-story-stage">
+            <strong>{training ? "Задача 0 · Обучение" : chapter.title}</strong><span data-tone={storyBadge.tone}>{storyBadge.label}</span>
+          </div> : <Quest step={state.step} />}
           <div className="os-menu-tools">
+            {!training && <button type="button" className="os-task-progress" aria-expanded={dockPanel === "tickets"} onClick={event => toggleDockPanel("tickets", event.currentTarget)}>
+              {fridayMission ? "Волна" : "Задачи"} {ticketIndex + 1}/{ticketCount}
+              <span className="os-task-dots" aria-hidden="true">
+                {chapter.tickets.map(item => <i key={item.id} data-status={completed.has(item.id) ? "done" : item.id === ticket.id ? "current" : undefined} />)}
+                {chapter.upcoming.map(title => <i key={title} />)}
+              </span>
+            </button>}
+            <button type="button" className="os-icon-button os-sound" aria-label="Звук" aria-pressed={sound} onClick={toggleSound}>
+              {sound ? <Volume2 size={17} aria-hidden="true" /> : <VolumeX size={17} aria-hidden="true" />}
+            </button>
+            <QuickHelp onToggle={fridayMission ? setHelpOpen : undefined} />
             <DeskClock />
-            <QuickHelp canRepeat={canRepeatTutorial} onRepeat={repeatTutorial} />
           </div>
+          {dockPanel === "tickets" && (
+            <section className="os-popover os-menu-tickets" ref={popover} tabIndex={-1} aria-labelledby="os-tickets-title">
+              <header><h2 id="os-tickets-title">{chapter.title}</h2><button type="button" className="os-icon-button" aria-label="Закрыть панель" onClick={closeDockPanel}><X size={17} aria-hidden="true" /></button></header>
+              <p className="os-ticket-progress">{difficultyLabel} уровень · Выпущено {completed.size} из {ticketCount}</p>
+              <ol className="os-ticket-list">
+                {chapter.tickets.map(item => item.id === ticket.id
+                  ? <li key={item.id} aria-current="step"><button type="button" onClick={() => openApp("browser")}>{item.title}<span>{completed.has(item.id) ? "Выпущена" : "В работе"}</span></button></li>
+                  : <li key={item.id}><span>{item.title}</span><small>{completed.has(item.id) ? "Выпущена" : "В очереди"}</small></li>)}
+                {chapter.upcoming.map(title => <li key={title}><span>{title}</span><small>Скоро</small></li>)}
+              </ol>
+            </section>
+          )}
         </header>
+        {fridayMission && <FridayHud run={wave} phase={wavePhase} security={feedback.run.security}
+          onPause={() => setWavePaused(true)} onOpenBrowser={openTraffic} />}
         <div className="os-notifications" aria-live="polite">
           <AnimatePresence mode="wait">
             {notice && <motion.aside key={notice.id} className="os-toast" data-tone={notice.tone} initial={reducedMotion ? false : { x: 26 }} animate={{ x: 0 }} exit={{ x: 16 }} transition={reducedMotion ? { duration: 0 } : spring}>
@@ -625,51 +915,67 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
           <AppWindow {...windowProps(apps[0])}>
             <div className="os-filebar">
               <code><Code2 size={14} aria-hidden="true" /> {ticket.file}</code>
-              <span className="os-audit">ИИ: угроз не найдено</span>
             </div>
+            {fridayMission && <div className="os-appsec-tools" aria-label="Инструменты AppSec">
+              <button type="button" className="os-secondary" disabled={!waveRunning || !wave.xrayCharges || wave.xrayMs > 0 || !ticket.evidenceLineId || state.evidenceId === ticket.evidenceLineId}
+                onClick={() => useAbility("xray")}><ScanLine size={16} aria-hidden="true" /> X-Ray Импульс ({wave.xrayCharges})</button>
+              <button type="button" className="os-secondary" disabled={!waveRunning || !wave.freezeCharges || wave.freezeMs > 0}
+                onClick={() => useAbility("freeze")}><Snowflake size={16} aria-hidden="true" /> Заморозка деплоя ({wave.freezeCharges})</button>
+            </div>}
             <div className="os-window-scroll os-editor-scroll" ref={editorBody}>
               {renderTutorial("code")}
+              {fridayMission && state.step === "locate" && (!capturedLeak || !wave.rosterSeen) && <p className="friday-evidence-guide">
+                {!capturedLeak ? "Перехвати пакет с утечкой в WorkBrowser, чтобы отметить улику." : "Сверь адрес со списком банка в WorkChat, затем отметь улику."}
+              </p>}
               <div className="preview-code os-code" {...tutorialAttrs("code")}>
                 {lines.map((line, index) => {
+                  const hovered = hoveredLine?.id === line.id
                   const marked = state.evidenceId === line.id
-                  const detected = state.step === "locate" && Boolean(state.checks && !state.checks.security.ok) && selectedLine === line.id
+                  const selected = selectedLine === line.id
+                  const canMark = state.step === "locate" && selected && !marked
                   const changed = patch?.changes.some(change => change.id === line.id)
                   const hintId = `workos-line-${line.id}`
                   return (
-                    <div key={line.id}>
+                    <div key={line.id} className="os-code-row">
                       <button
                         type="button"
                         className="preview-line os-line"
-                        aria-pressed={selectedLine === line.id}
+                        aria-pressed={selected}
                         aria-describedby={hintId}
                         data-active={activeLine === line.id}
                         data-threat={marked && state.step === "patch"}
-                        data-marker={marked ? evidenceWrong ? "retry" : "evidence" : changed ? "changed" : detected ? "suspect" : undefined}
-                        onFocus={() => setSelectedLine(line.id)}
+                        data-marker={marked ? evidenceWrong ? "retry" : "evidence" : changed ? "changed" : undefined}
+                        data-xray={fridayMission && wave.xrayMs > 0 && state.evidenceId !== ticket.evidenceLineId && line.id === ticket.evidenceLineId || undefined}
                         onClick={() => { setSelectedLine(line.id); if (sound) audio.play("click") }}
-                        onPointerEnter={event => { if (event.pointerType !== "touch") setHoveredLine(line.id) }}
+                        onPointerEnter={event => {
+                          if (event.pointerType === "touch" || !editorBody.current) return
+                          const lineBox = event.currentTarget.getBoundingClientRect()
+                          const scrollBox = getWindowScroller(editorBody.current).getBoundingClientRect()
+                          const below = scrollBox.bottom - lineBox.bottom
+                          const above = lineBox.top - scrollBox.top
+                          setHoveredLine({ id: line.id, above: below < 64 && above > below })
+                        }}
                         onPointerLeave={() => setHoveredLine(null)}
                       >
                         <span className="preview-line-number">{String(index + 1).padStart(2, "0")}</span>
                         <CodeSource text={line.text} detailed />
                         {marked && <><span className="sr-only">{evidenceWrong ? "Улика не подтверждена" : "Улика отмечена"}</span>{evidenceWrong ? <CircleAlert size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}</>}
                       </button>
-                      <span id={hintId} className="sr-only">{line.hint}</span>
+                      <span id={hintId} className="os-line-tooltip" data-visible={hovered || undefined} data-above={hovered && hoveredLine.above}>{line.hint}</span>
+                      {canMark && <motion.div className="os-evidence-actions" initial={reducedMotion ? false : { opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }}>
+                        <button type="button" className="os-primary" disabled={fridayMission && !canMarkIncident} onClick={() => markEvidence(line.id)}><Check size={16} aria-hidden="true" /> Отметить улику</button>
+                      </motion.div>}
+                      {selected && marked && evidenceWrong && <p className="os-evidence-error" role="status">Эта строка не объясняет утечку. Выбери другую.</p>}
                     </div>
                   )
                 })}
               </div>
               {showPatches && ticket.patches.length > 0 && (
-                <fieldset className="os-patches" ref={patchList} {...tutorialAttrs("patches")}>
-                  <legend>Выберите исправление</legend>
-                  {renderTutorial("patches")}
+                <fieldset className="os-patches" ref={patchList}>
+                  <legend>{fridayMission ? "Что отключить перед выпуском?" : "Выберите исправление"}</legend>
                   {ticket.patches.map(option => (
                     <label className="os-patch" key={option.id}>
-                      <input type="radio" name="review-patch" checked={option.id === state.patchId} onChange={() => {
-                        dispatch({ type: "selectPatch", patchId: option.id })
-                        setPaymentTried(false)
-                        if (sound) audio.play("patch")
-                      }} />
+                      <input type="radio" name="review-patch" checked={option.id === state.patchId} onChange={() => choosePatch(option.id)} />
                       <span><strong>{option.title}</strong><small>{option.detail}</small></span>
                     </label>
                   ))}
@@ -678,82 +984,95 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
             </div>
             <footer className="os-window-footer os-code-footer">
               {renderTutorial("code-footer")}
-              <p className="os-explanation">{explanation ?? "Наведите или нажмите на строку, чтобы прочитать пояснение."}</p>
-              {state.step === "locate" && <div className="os-evidence-actions">
-                {evidenceWrong && <p className="os-evidence-error" role="status">Эта строка не объясняет утечку. Выберите другую.</p>}
-                <motion.button type="button" className="os-primary" whileTap={reducedMotion ? undefined : { scale: .96 }} disabled={!selectedLine} onClick={() => {
-                  if (!selectedLine) return
-                  dispatch({ type: "mark", lineId: selectedLine })
-                  if (selectedLine === ticket.evidenceLineId) {
-                    applyFeedback("evidence")
-                    openCode()
-                  }
-                }}><Check size={16} aria-hidden="true" /> Отметить улику</motion.button>
-              </div>}
-              {state.step === "patch" && <p role="status">Улика подтверждена. Выберите исправление.</p>}
+              <p className="os-explanation"><HighlightedText text="**Наведись** на строку, чтобы узнать, что она делает." /></p>
+              {state.step === "patch" && <p role="status">{training ? "Улика подтверждена. Загляни в подсвеченный сейф." : "Улика подтверждена. Выберите исправление."}</p>}
               {(state.step === "retest" || state.step === "stamp") && <button type="button" className="os-secondary" {...tutorialAttrs("code-footer")} onClick={() => { setBrowserTab("checks"); openApp("browser") }}>К проверкам в браузере</button>}
             </footer>
           </AppWindow>
 
-          <AppWindow {...windowProps(apps[1])} shake={shake}>
+          <AppWindow {...windowProps(apps[1])} shake={fridayMission ? 0 : shake}>
             <div className="os-browser-chrome">
-              <div className="os-address"><LockKeyhole size={14} aria-hidden="true" /><code>https://shop.local/pay</code></div>
-              <button type="button" className="os-icon-button" aria-label="Обновить предпросмотр" title="Обновить предпросмотр" onClick={() => {
+              <div className="os-address"><LockKeyhole size={14} aria-hidden="true" /><code>{fridayMission ? "Банк · Тестовый стенд оплаты" : training ? "https://demo.local/pay" : "https://shop.local/pay"}</code></div>
+              {!training && !fridayMission && <button type="button" className="os-icon-button" aria-label="Обновить предпросмотр" title="Обновить предпросмотр" onClick={() => {
                 setBrowserTab("preview")
                 setPaymentTried(false)
                 notify("WorkBrowser", "Предпросмотр обновлён.")
-              }}><RotateCcw size={16} aria-hidden="true" /></button>
+              }}><RotateCcw size={16} aria-hidden="true" /></button>}
             </div>
-            {!released && <div className="os-browser-modes">
+            {!training && !fridayMission && !released && <div className="os-browser-modes">
               <div className="os-segments" role="group" aria-label="Режим просмотра">
                 <button type="button" aria-pressed={browserTab === "preview"} onClick={() => setBrowserTab("preview")}>Предпросмотр</button>
                 <button type="button" aria-pressed={browserTab === "checks"} onClick={() => setBrowserTab("checks")}>Проверки</button>
               </div>
               <span>Тестовые данные</span>
             </div>}
-            <div className="os-window-scroll os-browser-scroll" key={released ? "release" : browserTab} ref={browserBody}>
+            <div className="os-window-scroll os-browser-scroll" key={released ? "release" : fridayMission ? "incident" : browserTab} ref={browserBody}>
+              {fridayMission && (wavePhase === "live" || wavePhase === "paused") && <>
+                <TrafficIntercept key={state.patchId ?? "before"} packets={(state.patchId && packetRuns[state.patchId]) || incidentPackets}
+                  paused={!waveRunning} onArrive={finishTrafficCheck} onCatch={catchTraffic} onEvidence={openCode} />
+                {wave.captured.length > 0 && <details className="friday-packet-log">
+                  <summary>Журнал перехватов ({wave.captured.length})</summary>
+                  <ul>{incidentPackets.filter(packet => wave.captured.includes(packet.id)).map(packet => <li key={packet.id}>{packet.channel} · {packet.route}</li>)}</ul>
+                </details>}
+              </>}
               {released ? (
                 <div className="os-release">
-                  <motion.div className="os-release-stamp" initial={reducedMotion ? false : { opacity: .5, scale: 1.1, rotate: -7 }} animate={{ opacity: 1, scale: 1, rotate: 0 }} transition={spring}><Stamp size={18} aria-hidden="true" /> В ПРОДАКШН</motion.div>
-                  <h3>Обновление выпущено</h3><p>{ticket.summary}</p>
+                  <motion.div className="os-release-stamp" initial={reducedMotion ? false : { opacity: .5, scale: 1.1, rotate: -7 }} animate={{ opacity: 1, scale: 1, rotate: 0 }} transition={spring}><Stamp size={18} aria-hidden="true" /> {fridayMission ? "АТАКА ОТБИТА" : "В ПРОДАКШН"}</motion.div>
+                  <h3>{fridayMission ? "Оплата защищена" : training ? "Обучение пройдено" : "Обновление выпущено"}</h3><p>{ticket.summary}</p>
                 </div>
-              ) : browserTab === "preview" && (
+              ) : browserTab === "preview" && !fridayMission && (
                 <div className="os-payment-preview">
                   <div className="os-payment">
                     <div className="os-payment-icon"><WalletCards size={20} aria-hidden="true" /></div>
                     <div><h3>{ticket.preview.title}</h3><p>{ticket.preview.reference}</p></div>
                     <strong>{ticket.preview.amount}</strong>
                   </div>
-                  <div className="os-payment-trial">
+                  {!training && <div className="os-payment-trial">
                     <motion.button type="button" className="os-secondary" whileHover={{ y: -1 }} transition={spring} onClick={() => setPaymentTried(true)}>Пробная оплата</motion.button>
                     {paymentTried && <p role="status" data-result={checkStatus(paymentResult)}>{paymentResult.detail}</p>}
-                  </div>
+                  </div>}
                 </div>
               )}
-              <div className="os-results" aria-live="polite">
+              {sendingOrder && <div className="os-order-track" role="status" aria-label="Заказ отправляется на сервер">
+                <span><WalletCards size={16} aria-hidden="true" /> Оплата</span>
+                <span><Server size={16} aria-hidden="true" /> Сервер</span>
+                <motion.span className="os-order-packet" aria-hidden="true" initial={{ left: reducedMotion ? "50%" : "0%" }}
+                  animate={{ left: reducedMotion ? "50%" : "100%" }} transition={{ duration: reducedMotion ? 0 : orderTransitMs / 1000, ease: "linear" }}>
+                  <WalletCards size={18} />
+                </motion.span>
+              </div>}
+              {training && (state.step === "locate" || state.step === "stamp") && browserTab === "checks" && <section className="os-packet-result" tabIndex={-1} aria-label="Содержимое пакета">
+                <strong>Содержимое пакета</strong>
+                <p>{ticket.preview.reference} · {ticket.preview.amount}</p>
+                {state.step === "locate" ? <p className="os-vault-status"><code>secretKey = {trainingKey}</code> · Секретный ключ виден</p> : <p className="os-vault-status" data-isolated="true">Секретного ключа в пакете нет</p>}
+                {state.step === "locate" && <p><HighlightedText text={trainingLeakExplanation} /></p>}
+              </section>}
+              {keyIsolated && (browserTab === "checks" || released) && <p className="os-vault-status" data-isolated="true" role="status">Ключ изолирован на сервере</p>}
+              {(!training || state.checks) && <div className="os-results" aria-live="polite">
                 <CheckTile label="Безопасность" result={state.checks?.security} />
-                <CheckTile label="Работа функции" result={state.checks?.feature} />
-              </div>
+                <CheckTile label={fridayMission ? "Работа оплаты" : "Работа функции"} result={state.checks?.feature} />
+              </div>}
             </div>
-            <footer className="os-window-footer os-browser-footer" data-has-tutorial={tutorialTarget === "browser" || undefined}>
+            {(!fridayMission || state.step === "stamp") && <footer className="os-window-footer os-browser-footer" data-has-tutorial={tutorialTarget === "browser" || undefined}>
               {renderTutorial("browser")}
-              {browserInstruction && <p>{browserInstruction}</p>}
-              <motion.button type="button" className="os-primary" {...tutorialAttrs("browser")} whileTap={reducedMotion ? undefined : { scale: .96 }} transition={spring} onClick={browserAction.run}><ActionIcon size={17} aria-hidden="true" /> {browserAction.label}</motion.button>
-            </footer>
+              {!training && !fridayMission && browserInstruction && <p>{browserInstruction}</p>}
+              <motion.button type="button" className={`os-primary${trainingAction || fridayMission ? " os-training-action" : ""}`} {...tutorialAttrs("browser")} disabled={sendingOrder || fridayMission && !waveRunning}
+                whileTap={reducedMotion ? undefined : { scale: .96 }} transition={spring} onClick={browserAction.run}><ActionIcon size={17} aria-hidden="true" /> {sendingOrder ? "Отправка заказа…" : browserAction.label}</motion.button>
+            </footer>}
           </AppWindow>
 
           <AppWindow {...windowProps(apps[2])}>
             <div className="os-window-scroll os-messages" role="log" aria-label="Сообщения команды" ref={chatBody}>
-              {messages.map((message, index) => (
-                <article className="os-message" key={index}>
-                  <Portrait message={message} />
+              {visibleMessages.map((message, index) => (
+                <article className="os-message" data-player={message.author === "player" || undefined} key={`${message.sentAt.getTime()}:${message.author}:${index}`}>
+                  {message.author !== "player" && <Portrait message={message} />}
                   <div>
                     <div className="os-message-meta">
-                      <strong>{characters[message.author].name}</strong>
-                      <span className="os-message-role">{characters[message.author].role}</span>
+                      <strong>{message.author === "player" ? storyCopy.player : characters[message.author].name}</strong>
+                      {message.author !== "player" && <span className="os-message-role">{characters[message.author].role}</span>}
                       <time dateTime={message.sentAt.toISOString()}>{clockFormat.format(message.sentAt)}</time>
                     </div>
-                    <p>{message.text}</p>
+                    <p><HighlightedText text={message.text} /></p>
                   </div>
                 </article>
               ))}
@@ -763,31 +1082,55 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
                   {characters[typing.author].name} печатает…
                 </p>
               )}
+              {fridayMission && <AllowedHosts />}
             </div>
-            <footer className="os-window-footer os-chat-footer">
+            {!training && <footer className="os-window-footer os-chat-footer">
+              {storyVisible && storyRecord && !storyRecord.replyAt && <div className="os-story-replies" aria-label={storyCopy.replies}>
+                <button type="button" className="os-secondary" disabled={storyRecord.choice !== undefined} onClick={() => answerStory(0)}>{scene.answers[0].label}</button>
+                <button type="button" className="os-secondary" disabled={storyRecord.choice !== undefined} onClick={() => answerStory(1)}>{scene.answers[1].label}</button>
+              </div>}
               <motion.button type="button" className="os-secondary" whileHover={mentorAsked ? undefined : { y: -1 }} transition={spring} disabled={mentorAsked} onClick={askMentor}><Lightbulb size={16} aria-hidden="true" /> {mentorAsked ? "Подсказка в чате" : "Спросить Макса"}</motion.button>
-            </footer>
+            </footer>}
           </AppWindow>
         </main>
+        {showTrainingIntro && <TrainingTeam onContinue={openTrainingChat} />}
+        {training && released && <TrainingComplete onStart={beginShift} />}
+        {fridayMission && wavePhase !== "live" && <FridayBrief key={wavePhase} phase={wavePhase} run={wave} waveNumber={waveNumber} waveCount={ticketCount}
+          finalReport={finalReport} highMetrics={feedback.run.security >= 70 && feedback.run.stability >= 70} onAction={advanceWave} onReset={() => restart()} />}
 
         <div className="os-dock-area">
-          {dockHint && tutorialStep !== null && <TutorialHint step={tutorialStep} onSkip={skipTutorial} atDock />}
-          {dockPanel && (
+          {dockHint && tutorialStep !== null && <TutorialHint step={tutorialStep} atDock />}
+          {dockPanel && dockPanel !== "tickets" && (
             <section className="os-popover" ref={popover} tabIndex={-1} aria-labelledby="workos-popover-title">
               <header><h2 id="workos-popover-title">{dockPanelTitle}</h2><button type="button" className="os-icon-button" aria-label="Закрыть панель" onClick={closeDockPanel}><X size={17} aria-hidden="true" /></button></header>
-              {dockPanel === "tickets" ? <>
-                <p className="os-ticket-progress">Выпущено: {completed.size} из {ticketCount}</p>
-                <ol className="os-ticket-list">
-                  {chapter.tickets.map(item => <li key={item.id}><button type="button" onClick={() => openApp("browser")}>{item.title}<span>{completed.has(item.id) ? "Выпущена" : "В работе"}</span></button></li>)}
-                  {chapter.upcoming.map(title => <li key={title}><span>{title}</span><small>Скоро</small></li>)}
-                </ol>
-              </> : dockPanel === "vault" ? <div className="os-vault">
-                <span className="os-vault-icon"><LockKeyhole size={20} aria-hidden="true" /></span>
-                <p>Служебные ключи хранятся на сервере. Песочница проверяет, доступны ли они браузеру.</p>
+              {dockPanel === "vault" ? <div className="os-vault">
+                <p>Серверное хранилище секретов (.env): сюда прячут ключи, чтобы их не видели в браузере</p>
                 {renderTutorial("vault")}
-                {tutorialTarget === "vault"
-                  ? <button type="button" className="os-secondary" {...tutorialAttrs("vault")} onClick={openCode}>К исправлению в WorkCode</button>
-                  : <button type="button" className="os-secondary" onClick={() => { setBrowserTab("checks"); openApp("browser") }}>Открыть проверку ключа</button>}
+                {training && (state.step === "patch" || keyIsolated) ? <>
+                  {!keyIsolated && <button type="button" className="os-secondary os-training-key" draggable={!keyInVault} disabled={keyInVault}
+                    onDragStart={event => { event.dataTransfer.setData("text/plain", trainingKey); event.dataTransfer.effectAllowed = "move" }}
+                    onClick={() => setKeyInVault(true)} aria-label="Перенести секретный ключ в сейф"><KeyRound size={17} aria-hidden="true" /> <code>{trainingKey}</code></button>}
+                  <div className="os-training-vault" data-locked={keyIsolated} onDragOver={event => event.preventDefault()} onDrop={event => {
+                    event.preventDefault()
+                    if (!keyIsolated && event.dataTransfer.getData("text/plain") === trainingKey) setKeyInVault(true)
+                  }}>
+                    <div className="os-vault-lock">
+                      <motion.span animate={{ rotate: keyIsolated && !reducedMotion ? 90 : 0 }}><LockKeyhole size={22} aria-hidden="true" /></motion.span>
+                      <code>.env</code>
+                    </div>
+                    {keyIsolated ? <p className="os-vault-status" data-isolated="true" role="status">Замок закрыт. Ключ остался на сервере.</p>
+                      : keyInVault ? <button type="button" className="os-primary" onClick={lockVault}>Повернуть замок</button>
+                        : <p>Перетащи сюда ключ или нажми на него.</p>}
+                  </div>
+                  {keyIsolated && <button type="button" className="os-secondary" onClick={() => openApp("browser")}>Открыть WorkBrowser</button>}
+                </> : vaultPatch && (keyIsolated ? <>
+                  <p className="os-vault-status" data-isolated="true">Ключ изолирован на сервере</p>
+                  <code>PAYMENT_KEY = ••••••••</code>
+                </> : <>
+                  <p className="os-vault-status">{patch?.checks.security.ok ? "Оплата отключена. Ключ ещё не перенесён в сейф." : "Утечка: ключ доступен в браузере"}</p>
+                  <button type="button" className="os-secondary" {...tutorialAttrs("vault")} onClick={moveKeyToVault}>Перенести ключ в .env-сейф</button>
+                </>)}
+                {!training && <button type="button" className="os-secondary" onClick={checkKey}>Открыть проверку ключа</button>}
               </div> : <AchievementList earned={feedback.earned} />}
             </section>
           )}
@@ -796,20 +1139,21 @@ export default function ReviewDesk({ chapter, ticket, audio, difficulty }: {
               const isOpen = !hidden.includes(app.id)
               return (
                 <motion.button key={app.id} type="button" className="os-dock-item" data-app={app.id} data-open={isOpen}
+                  disabled={training && app.id === "code" && state.step === "explore"}
                   {...(app.id === "chat" ? {} : tutorialAttrs(`dock-${app.id}`))}
                   aria-label={app.label} aria-controls={`workos-${app.id}`} aria-pressed={isOpen && active === app.id} onClick={() => openApp(app.id)} whileTap={{ scale: .95 }} transition={spring}>
                   <DockIcon app={app.id} />
-                  {app.id === "chat" && unread && <span className="os-unread" aria-label="Одно непрочитанное сообщение">1</span>}
+                  {app.id === "chat" && unread && <span className="os-unread" aria-label="Новые сообщения">1</span>}
                 </motion.button>
               )
             })}
             <span className="os-dock-divider" aria-hidden="true" />
-            <motion.button type="button" className="os-dock-item" data-app="vault" {...tutorialAttrs("dock-vault")} aria-label="Сейф секретов" aria-expanded={dockPanel === "vault"} onClick={() => toggleDockPanel("vault")} whileTap={{ scale: .95 }} transition={spring}><DockIcon app="vault" /></motion.button>
-            <motion.button type="button" className="os-dock-item" data-app="tickets" aria-label="Задачи" aria-expanded={dockPanel === "tickets"} onClick={() => toggleDockPanel("tickets")} whileTap={{ scale: .95 }} transition={spring}><DockIcon app="tickets" /></motion.button>
-            <motion.button type="button" className="os-dock-item" data-app="achievements" aria-label="Достижения"
-              aria-expanded={dockPanel === "achievements"} onClick={() => toggleDockPanel("achievements")} whileTap={{ scale: .95 }} transition={spring}>
+            {!fridayMission && <motion.button type="button" className="os-dock-item" data-app="vault" {...tutorialAttrs("dock-vault")} disabled={training && state.step !== "patch"} aria-label="Сейф секретов" aria-expanded={dockPanel === "vault"} onClick={event => toggleDockPanel("vault", event.currentTarget)} whileTap={{ scale: .95 }} transition={spring}><DockIcon app="vault" /></motion.button>}
+            {!training && <motion.button type="button" className="os-dock-item" data-app="tickets" aria-label="Задачи" aria-expanded={dockPanel === "tickets"} onClick={event => toggleDockPanel("tickets", event.currentTarget)} whileTap={{ scale: .95 }} transition={spring}><DockIcon app="tickets" /></motion.button>}
+            {!training && <motion.button type="button" className="os-dock-item" data-app="achievements" aria-label="Достижения"
+              aria-expanded={dockPanel === "achievements"} onClick={event => toggleDockPanel("achievements", event.currentTarget)} whileTap={{ scale: .95 }} transition={spring}>
               <DockIcon app="achievements" />
-            </motion.button>
+            </motion.button>}
           </nav>
         </div>
 

@@ -1,4 +1,6 @@
 import type { Chapter, ReviewChecks, Ticket } from "../types/game"
+import { readFeedback } from "./feedback.ts"
+import type { Feedback } from "./feedback.ts"
 
 export type ReviewStep = "explore" | "locate" | "patch" | "retest" | "stamp" | "released"
 
@@ -16,7 +18,10 @@ export type ReviewAction =
 
 export const initialReview: ReviewState = { step: "explore" }
 
-export function serializeReview(ticket: Ticket, state: ReviewState) {
+const saveKey = "worklab.review.v1"
+const legacyFeedbackKey = "worklab.feedback.v1"
+
+export function serializeReview(ticket: Ticket, state: ReviewState, feedback?: Feedback) {
   return JSON.stringify({
     version: 1,
     ticketId: ticket.id,
@@ -24,37 +29,74 @@ export function serializeReview(ticket: Ticket, state: ReviewState) {
     evidenceId: state.evidenceId ?? null,
     patchId: state.patchId ?? null,
     tested: Boolean(state.checks),
+    feedback: feedback && { ...feedback, version: 1, task: ticket.id },
   })
 }
 
 export function restoreReview(ticket: Ticket, saved: string | null): ReviewState {
-  if (!saved) return initialReview
   try {
-    const snapshot: unknown = JSON.parse(saved)
-    if (!snapshot || typeof snapshot !== "object" ||
-      !("version" in snapshot) || snapshot.version !== 1 ||
-      !("ticketId" in snapshot) || snapshot.ticketId !== ticket.id ||
-      !("step" in snapshot) || typeof snapshot.step !== "string" ||
-      !("evidenceId" in snapshot) || (snapshot.evidenceId !== null && typeof snapshot.evidenceId !== "string") ||
-      !("patchId" in snapshot) || (snapshot.patchId !== null && typeof snapshot.patchId !== "string") ||
-      !("tested" in snapshot) || typeof snapshot.tested !== "boolean"
-    ) return initialReview
-
-    let state = initialReview
-    if (snapshot.step !== "explore") state = review(ticket, state, { type: "check" })
-    if (snapshot.evidenceId !== null) state = review(ticket, state, { type: "mark", lineId: snapshot.evidenceId })
-    if (snapshot.patchId !== null) {
-      state = review(ticket, state, { type: "selectPatch", patchId: snapshot.patchId })
-      if (snapshot.tested) state = review(ticket, state, { type: "retest" })
-    }
-    if (snapshot.step === "released") state = review(ticket, state, { type: "release" })
-    return state.step === snapshot.step &&
-      (state.evidenceId ?? null) === snapshot.evidenceId &&
-      (state.patchId ?? null) === snapshot.patchId &&
-      Boolean(state.checks) === snapshot.tested ? state : initialReview
+    return decodeReview(ticket, JSON.parse(saved ?? "null")) ?? initialReview
   } catch {
     return initialReview
   }
+}
+
+function decodeReview(ticket: Ticket, snapshot: unknown): ReviewState | null {
+  if (!snapshot || typeof snapshot !== "object" ||
+    !("version" in snapshot) || snapshot.version !== 1 ||
+    !("ticketId" in snapshot) || snapshot.ticketId !== ticket.id ||
+    !("step" in snapshot) || typeof snapshot.step !== "string" ||
+    !("evidenceId" in snapshot) || (snapshot.evidenceId !== null && typeof snapshot.evidenceId !== "string") ||
+    !("patchId" in snapshot) || (snapshot.patchId !== null && typeof snapshot.patchId !== "string") ||
+    !("tested" in snapshot) || typeof snapshot.tested !== "boolean"
+  ) return null
+
+  let state = initialReview
+  if (snapshot.step !== "explore") state = review(ticket, state, { type: "check" })
+  if (snapshot.evidenceId !== null) state = review(ticket, state, { type: "mark", lineId: snapshot.evidenceId })
+  if (snapshot.patchId !== null) {
+    state = review(ticket, state, { type: "selectPatch", patchId: snapshot.patchId })
+    if (snapshot.tested) state = review(ticket, state, { type: "retest" })
+  }
+  if (snapshot.step === "released") state = review(ticket, state, { type: "release" })
+  return state.step === snapshot.step &&
+    (state.evidenceId ?? null) === snapshot.evidenceId &&
+    (state.patchId ?? null) === snapshot.patchId &&
+    Boolean(state.checks) === snapshot.tested ? state : null
+}
+
+export function readShift(chapter: Chapter, training?: Ticket, previousFirstTasks: readonly string[] = []) {
+  try {
+    const raw = localStorage.getItem(saveKey)
+    const snapshot = JSON.parse(raw ?? "null")
+    const firstTask = chapter.tickets[0]
+    if (firstTask && snapshot?.version === 1 && previousFirstTasks.includes(snapshot.ticketId)) {
+      const feedback = readFeedback(JSON.stringify(snapshot.feedback), [], firstTask.id, false)
+      return { ticket: firstTask, state: initialReview, feedback: { ...feedback, wave: undefined } }
+    }
+    const ticket = training && training.id === snapshot?.ticketId ? training : chapter.tickets.find(item => item.id === snapshot?.ticketId)
+    if (!ticket) return null
+    const state = decodeReview(ticket, snapshot)
+    if (!state) return null
+    const feedback = readFeedback(
+      Object.hasOwn(snapshot, "feedback") ? JSON.stringify(snapshot.feedback) : localStorage.getItem(legacyFeedbackKey),
+      chapter.tickets.map(item => item.id), ticket.id, true,
+    )
+    return { ticket, state, feedback }
+  } catch {
+    return null
+  }
+}
+
+export function saveShift(ticket: Ticket, state: ReviewState, feedback: Feedback) {
+  try { localStorage.setItem(saveKey, serializeReview(ticket, state, feedback)) } catch {}
+}
+
+export function clearShift() {
+  try {
+    localStorage.removeItem(saveKey)
+    localStorage.removeItem(legacyFeedbackKey)
+  } catch {}
 }
 
 function canRelease(checks: ReviewChecks | undefined) {

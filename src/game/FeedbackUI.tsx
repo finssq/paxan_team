@@ -1,10 +1,11 @@
-import { Check, LockKeyhole, Trophy } from "lucide-react"
+import { ArrowRight, Check, CircleCheck, Info, LockKeyhole, Trophy } from "lucide-react"
 import { motion, useReducedMotion } from "motion/react"
 import { useEffect, useRef } from "react"
-import type { KeyboardEvent } from "react"
-import { achievements, questSteps } from "./feedback"
+import type { KeyboardEvent, ReactNode } from "react"
+import { achievements, characters, questSteps } from "./feedback"
 import type { Achievement, Message } from "./feedback"
 import type { ReviewStep } from "./review"
+import { trainingHints, trainingTeam } from "../data/training"
 
 function useDismissibleDetails() {
   const details = useRef<HTMLDetailsElement>(null)
@@ -46,46 +47,85 @@ export function Quest({ step }: { step: ReviewStep }) {
   )
 }
 
-const tutorialText = {
-  1: "Сначала проверь фичу Дениса — вдруг там дыра",
-  2: "Ключ утёк в браузер. Нажми на строки, чтобы расшифровать код, и отметь опасную",
-  3: "Спрячь секретный ключ на сервер",
-  4: "Перепроверь, что атака отбита, и выпускай в продакшн",
+export type TutorialStep = keyof typeof trainingHints
+
+export function HighlightedText({ text }: { text: string }) {
+  return text.split(/\*\*([^*]+)\*\*/).map((part, index) => index % 2 === 0 ? part : <strong className="os-keyword" key={index}>{part}</strong>)
 }
 
-export type TutorialStep = keyof typeof tutorialText
+export function SkipTutorialButton({ onSkip }: { onSkip: () => void }) {
+  return <button type="button" className="os-secondary os-tutorial-skip" onClick={onSkip}>Пропустить обучение</button>
+}
 
-export function TutorialHint({ step, onSkip, atDock = false }: { step: TutorialStep; onSkip: () => void; atDock?: boolean }) {
+export function TutorialHint({ step, atDock = false }: { step: TutorialStep; atDock?: boolean }) {
   return (
     <aside className={`os-tutorial-hint${atDock ? " os-tutorial-dock" : ""}`}>
-      <div className="os-tutorial-hint-heading">
-        <strong>Макс</strong>
-        <button type="button" className="os-tutorial-skip" onClick={onSkip}>Пропустить</button>
-      </div>
-      <p id="workos-tutorial-hint" aria-live="polite"><strong>Шаг {step}/4</strong> · {tutorialText[step]}</p>
+      <strong className="os-tutorial-hint-heading">Макс</strong>
+      <p id="workos-tutorial-hint" aria-live="polite"><strong>Шаг {step}/5</strong> · <HighlightedText text={trainingHints[step]} /></p>
     </aside>
   )
 }
 
-export function QuickHelp({ onRepeat, canRepeat }: { onRepeat: () => void; canRepeat: boolean }) {
+function TrainingDialog({ titleId, delay = 0, className = "", onDismiss, children }: {
+  titleId: string; delay?: number; className?: string; onDismiss?: () => void; children: ReactNode
+}) {
+  const dialog = useRef<HTMLDialogElement>(null)
+  const reducedMotion = useReducedMotion()
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      if (dialog.current && !dialog.current.open) dialog.current.showModal()
+    }, reducedMotion ? 0 : delay)
+    return () => window.clearTimeout(timeout)
+  }, [delay, reducedMotion])
+
+  return <dialog className={`os-training-dialog ${className}`} ref={dialog} aria-labelledby={titleId} onCancel={onDismiss}>{children}</dialog>
+}
+
+export function TrainingTeam({ onContinue }: { onContinue: () => void }) {
+  return (
+    <TrainingDialog titleId="os-training-team-title" className="os-training-team" onDismiss={onContinue}>
+      <h2 id="os-training-team-title">Познакомься с твоей командой</h2>
+      <ul className="os-team-list" role="list">
+        {trainingTeam.map(member => (
+          <li key={member.author}>
+            <Portrait message={member} />
+            <div>
+              <strong>{characters[member.author].name}</strong>
+              <span>{member.role}</span>
+              <p>{member.description}</p>
+            </div>
+          </li>
+        ))}
+      </ul>
+      <p className="os-team-intro"><HighlightedText text="Ты **стажёр по безопасности**. Проверь обновление Дениса перед выпуском." /></p>
+      <button type="button" className="os-primary os-training-action" onClick={onContinue}>Открыть чат <ArrowRight size={20} aria-hidden="true" /></button>
+    </TrainingDialog>
+  )
+}
+
+export function TrainingComplete({ onStart }: { onStart: () => void }) {
+  return (
+    <TrainingDialog titleId="os-training-complete-title" delay={320}>
+      <CircleCheck size={40} aria-hidden="true" />
+      <h2 id="os-training-complete-title">Вы прошли обучение</h2>
+      <button type="button" className="os-primary os-training-action" onClick={onStart}>Начать смену <ArrowRight size={20} aria-hidden="true" /></button>
+    </TrainingDialog>
+  )
+}
+
+export function QuickHelp({ onToggle }: { onToggle?: (open: boolean) => void }) {
   const help = useDismissibleDetails()
 
   return (
-    <details className="os-quick-help" ref={help} onKeyDown={closeDetailsOnEscape}>
-      <summary aria-label="Шпаргалка">?</summary>
+    <details className="os-quick-help" ref={help} onKeyDown={closeDetailsOnEscape} onToggle={event => onToggle?.(event.currentTarget.open)}>
+      <summary aria-label="Шпаргалка"><Info size={24} aria-hidden="true" /></summary>
       <section className="os-help-panel" aria-label="Шпаргалка WorkOS">
         <ul role="list">
           <li><strong>WorkCode</strong> — смотри код, читай расшифровку строк и отмечай уязвимость.</li>
           <li><strong>WorkBrowser</strong> — проверяй, работает ли фича и проходит ли атака хакера.</li>
           <li><strong>WorkChat</strong> — следи за коллегами и проси подсказку у Макса.</li>
         </ul>
-        <button type="button" className="os-secondary" disabled={!canRepeat} onClick={() => {
-          if (help.current) {
-            help.current.open = false
-            help.current.querySelector("summary")?.focus()
-          }
-          onRepeat()
-        }}>Повторить обучение</button>
       </section>
     </details>
   )
@@ -138,7 +178,7 @@ export function DockIcon({ app }: { app: keyof typeof dockIconNames }) {
   )
 }
 
-export function Portrait({ message }: { message: Message }) {
+export function Portrait({ message }: { message: Pick<Message, "author" | "mood"> }) {
   const { mood, author } = message
   const reduced = useReducedMotion()
   return (

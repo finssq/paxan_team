@@ -1,4 +1,7 @@
 import type { ReviewStep } from "./review"
+import { readWave } from "./incidentWave.ts"
+import type { WaveRun } from "./incidentWave.ts"
+import type { StoryProgress } from "../data/story"
 
 export const questSteps: { label: string; completed: ReviewStep[] }[] = [
   { label: "Запустить проверку", completed: ["locate", "patch", "retest", "stamp", "released"] },
@@ -16,10 +19,6 @@ export type Mood = "smile" | "alarmed" | "shocked" | "calm" | "guiding" | "appro
 export type Message = { author: keyof typeof characters; mood: Mood; text: string }
 
 export const mentorGreeting: Message = { author: "mentor", mood: "calm", text: "Сначала проверка, потом аплодисменты. Если застрянешь, подскажу, куда смотреть." }
-export const tutorialComplete: Message = {
-  author: "mentor", mood: "approve",
-  text: "Отлично, принцип ты понял. Дальше работаешь сам — если застрянешь, жми «Спросить Макса».",
-}
 
 export const reactions = {
   discovery: { author: "developer", mood: "alarmed", text: "Ключ в браузере?! Нейронка же сказала, что всё чисто! Успеем поправить?" },
@@ -32,6 +31,7 @@ export const reactions = {
 
 export const achievements = {
   skeptical: { title: "Не верю ИИ", detail: "Обнаружена первая уязвимость за зелёным бейджем ИИ." },
+  matrix: { title: "Вижу Матрицу", detail: "Перехвачен первый пакет в полёте." },
   independent: { title: "Чистая работа", detail: "Задача выпущена без подсказки Макса." },
   precise: { title: "Хирургический фикс", detail: "Уязвимость закрыта, функция по-прежнему работает." },
   streak: { title: "Серия без ошибок", detail: "Две разные задачи подряд выпущены без потерь метрик." },
@@ -44,6 +44,9 @@ type Run = Metrics & { hint: boolean; flawless: boolean }
 export type Feedback = {
   sound: boolean
   tutorialDismissed: boolean
+  trainingIntroSeen: boolean
+  wave?: WaveRun
+  story?: Record<string, StoryProgress>
   earned: Achievement[]
   completed: string[]
   streak: number
@@ -58,9 +61,26 @@ const changes: Partial<Record<FeedbackEvent, Metrics>> = {
   clean: { security: 10, stability: 10 },
 }
 const initialRun: Run = { security: 80, stability: 85, hint: false, flawless: true }
-const initial: Feedback = { sound: false, tutorialDismissed: false, earned: [], completed: [], streak: 0, run: initialRun }
+const initial: Feedback = { sound: false, tutorialDismissed: false, trainingIntroSeen: false, earned: [], completed: [], streak: 0, run: initialRun }
 const metric = (value: number) => Math.max(0, Math.min(value, 100))
 const validMetric = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 100
+const validStoryTime = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= 8_640_000_000_000_000
+
+function readStory(value: unknown, ticketIds: string[]) {
+  if (!value || typeof value !== "object") return undefined
+  const story: Record<string, StoryProgress> = {}
+  for (const id of ticketIds) {
+    if (!Object.hasOwn(value, id)) continue
+    const entry = (value as Record<string, Partial<StoryProgress> | null>)[id]
+    if (!entry || !validStoryTime(entry.startedAt)) continue
+    story[id] = { startedAt: entry.startedAt }
+    if ((entry.choice === 0 || entry.choice === 1) && validStoryTime(entry.answeredAt)) {
+      story[id] = { startedAt: entry.startedAt, choice: entry.choice, answeredAt: entry.answeredAt,
+        replyAt: validStoryTime(entry.replyAt) ? entry.replyAt : undefined }
+    }
+  }
+  return story
+}
 
 export function readFeedback(saved: string | null, ticketIds: string[], task: string, resume: boolean): Feedback {
   try {
@@ -77,6 +97,9 @@ export function readFeedback(saved: string | null, ticketIds: string[], task: st
       sound: data.sound === true,
       tutorialDismissed: typeof data.tutorialDismissed === "boolean"
         ? data.tutorialDismissed : completed.includes(ticketIds[0] ?? ""),
+      trainingIntroSeen: data.trainingIntroSeen === true,
+      wave: readWave(data.wave),
+      story: readStory(data.story, ticketIds),
       earned,
       completed,
       streak: Number.isInteger(data.streak) && data.streak >= 0 && data.streak <= completed.length ? data.streak : 0,

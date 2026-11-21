@@ -88,13 +88,14 @@ test("saved review reconstructs each legal checkpoint and rejects forged release
 
 test("feedback defaults don't affect the old progression and saved fields are validated", () => {
   const fields = readFeedback(null, [ticket.id], ticket.id, true)
-  assert.equal(fields.sound, false)
+  assert.equal(fields.sound, true)
   assert.equal(fields.tutorialDismissed, false)
   assert.deepEqual(fields.run, { security: 80, stability: 85, hint: false, flawless: true })
   const corrupt = JSON.stringify({ version: 1, task: ticket.id, sound: "yes", earned: ["precise", "precise", "unknown"],
     completed: ["other"], streak: 99, run: { security: -1, stability: 85, hint: true, flawless: true } })
   const restored = readFeedback(corrupt, [ticket.id], ticket.id, true)
-  assert.equal(restored.sound, false)
+  assert.equal(restored.sound, true)
+  assert.equal(readFeedback(JSON.stringify({ version: 1, sound: false }), [ticket.id], ticket.id, true).sound, false)
   assert.deepEqual(restored.earned, ["precise"])
   assert.equal(restored.streak, 0)
   assert.deepEqual(restored.run, fields.run)

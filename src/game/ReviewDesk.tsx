@@ -1,11 +1,11 @@
-import { Check, CircleAlert, CircleCheck, Clock3, Code2, FlaskConical, KeyRound, Languages, Lightbulb, LockKeyhole, MessageSquare, Minus, RotateCcw, ScanSearch, Server, ShieldCheck, Snowflake, Square, Stamp, Trophy, Volume2, VolumeX, WalletCards, X } from "lucide-react"
+import { ArrowRight, Check, CircleAlert, CircleCheck, Clock3, Code2, FlaskConical, KeyRound, Languages, Lightbulb, LockKeyhole, MessageSquare, Minus, RotateCcw, ScanSearch, Server, ShieldCheck, Snowflake, Square, Stamp, Trophy, Volume2, VolumeX, WalletCards, X } from "lucide-react"
 import { animate, AnimatePresence, motion, MotionConfig, useReducedMotion } from "motion/react"
 import { useCallback, useEffect, useReducer, useRef, useState } from "react"
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react"
 import type { createSfx } from "../audio/sfx"
 import { trainingChat, trainingKey, trainingLeakExplanation } from "../data/training"
-import { friday, fridayChapter, incidentPackets, incidentTicket, packetRuns, practiceTicket, practiceTips } from "../data/friday"
-import { storyCopy, storyForWave } from "../data/story"
+import { friday, fridayChapter, getWaveScenario, practiceTicket, practiceTips } from "../data/friday"
+import { releaseEpilogue, storyCopy, storyForWave } from "../data/story"
 import type { Packet } from "../data/friday"
 import type { Chapter, CheckResult, Ticket } from "../types/game"
 import { CodeSource } from "../ui"
@@ -32,6 +32,18 @@ const codeViewKey = "worklab.code-view.v1"
 
 function loadCodeView(): CodeView {
   try { return window.localStorage.getItem(codeViewKey) === "code" ? "code" : "plain" } catch { return "plain" }
+}
+
+const patchToken = /https?:\/\/[\w.-]*[\w-](?::\d+)?(?:\/[\w%~@+.-]*[\w%~@+-])*|(?:\/[\w%~@+.-]*[\w%~@+-])+|(?<![\w.-])(?:process\.env(?:\.[\w$]+)*|\.env|secretKey|[\w-]+(?:\.[\w-]+)*\.(?:demo|ts))(?![\w-])/gi
+
+function PatchDetail({ text }: { text: string }) {
+  const parts: ReactNode[] = []
+  let cursor = 0
+  for (const { 0: token, index } of text.matchAll(patchToken)) {
+    parts.push(text.slice(cursor, index), <code key={index}>{token}</code>)
+    cursor = index + token.length
+  }
+  return <span className="os-patch-detail">{parts}{text.slice(cursor)}</span>
 }
 
 type DeskApp = typeof apps[number]["id"]
@@ -250,12 +262,15 @@ function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximiz
   )
 }
 
-export default function ReviewDesk({ chapter, ticket, saved, audio, training, onStartShift }: {
+export default function ReviewDesk({ chapter, ticket, saved, audio, training, onStartShift, onAdvanceWave }: {
   chapter: Chapter; ticket: Ticket; saved: ReturnType<typeof readShift>; audio: ReturnType<typeof createSfx>
-  training: boolean; onStartShift: (feedback: Feedback) => void
+  training: boolean; onStartShift: (feedback: Feedback, startImmediately?: boolean) => void
+  onAdvanceWave: (ticket: Ticket, feedback: Feedback) => void
 }) {
   const practice = ticket.id === practiceTicket.id
-  const fridayMission = practice || ticket.id === incidentTicket.id
+  const scenario = getWaveScenario(ticket.id)
+  const packets = scenario?.packets ?? []
+  const fridayMission = Boolean(scenario)
   const [lastPracticeTip, setLastPracticeTip] = useState(-1)
   const reducedMotion = useReducedMotion()
   const [state, dispatch] = useReducer((current: ReviewState, action: ReviewAction) => review(ticket, current, action), saved?.state ?? initialReview)
@@ -281,7 +296,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
   const [unread, setUnread] = useState(false)
   const [feedback, setFeedback] = useState(() => {
     const restored = saved?.feedback ?? readFeedback(null, [], ticket.id, false)
-    return { ...restored, sound: readSoundPreference(restored.sound) }
+    return { ...restored, sound: readSoundPreference() }
   })
   const feedbackRef = useRef(feedback)
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
@@ -291,6 +306,8 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
     return trainingChat.slice(0, completedSteps).flat().map(message => ({ ...message, sentAt }))
   })
   const [incoming, setIncoming] = useState(() => training ? [] : openingMessages(ticket, feedback.run.hint))
+  const [endingMessages, setEndingMessages] = useState<ChatMessage[]>(() => saved?.state.step === "released"
+    ? releaseEpilogue(feedback.hadAutoDeploy).map(line => ({ ...line, sentAt: new Date() })) : [])
   const [shake, setShake] = useState(0)
   const [notices, setNotices] = useState<Notice[]>([])
   const notice = notices[0]
@@ -312,26 +329,28 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
   const wavePhase: WavePhase = released ? "won" : !wave.started ? "ready"
     : !practice && !feedback.run.security ? "lost"
       : !wave.remainingMs ? "timeout" : wavePaused ? "paused" : "live"
-  const capturedLeak = incidentPackets.some(packet => packet.unsafe && wave.captured.includes(packet.id))
+  const capturedLeak = packets.some(packet => packet.unsafe && wave.captured.includes(packet.id))
   const tipIndex = state.step === "stamp" ? 3 : state.patchId ? 2 : capturedLeak ? 1 : 0
   const practiceTip = practice && wavePhase === "live" && tipIndex > lastPracticeTip ? practiceTips[tipIndex] : undefined
   const waveRunning = fridayMission && wavePhase === "live" && !helpOpen && !practiceTip
   const xraySweeping = fridayMission && wave.xrayMs > friday.xrayMs
   const xrayVisible = fridayMission && !released && wave.xrayMs > 0 && !xraySweeping
   const guide = fridayMission && wavePhase === "live" ? (
-    !capturedLeak ? { step: 1, target: "traffic", text: "Нажми «Провести тестовую оплату» в WorkBrowser и поймай летящий пакет." }
-      : !state.patchId ? { step: 2, target: "code", text: "Отметь подозрительную строку и выбери исправление в WorkCode. Адрес можно сверить в WorkChat." }
-        : state.checks && state.step === "retest" ? { step: 3, target: "code", text: "Одна из проверок не прошла. Выбери другое исправление в WorkCode." }
-          : state.step === "stamp" ? { step: 3, target: "release", text: "Обе проверки прошли. Нажми «В ПРОДАКШН», чтобы выпустить исправление." }
-            : { step: 3, target: "traffic", text: "Снова проведи тестовую оплату, чтобы проверить исправление." }
+    !capturedLeak ? { step: 1, target: "traffic", text: "Запусти проверку и перехвати пакет." }
+      : !state.patchId ? { step: 2, target: "code", text: "Отметь улику и выбери исправление." }
+        : state.checks && state.step === "retest" ? { step: 3, target: "code", text: "Проверка не прошла. Выбери другой патч." }
+          : state.step === "stamp" ? { step: 3, target: "release", text: "Проверки пройдены. Выпусти исправление." }
+            : { step: 3, target: "traffic", text: "Повтори отправку и проверь исправление." }
   ) : undefined
-  const ticketCount = chapter.tickets.length + chapter.upcoming.length
+  const ticketCount = chapter.tickets.length
   const ticketIndex = chapter.tickets.indexOf(ticket)
   const waveNumber = ticketIndex + 1
+  const nextTicket = chapter.tickets[waveNumber]
   const storyEnabled = !training && !practice && chapter === fridayChapter && waveNumber > 0
   const scene = storyForWave(waveNumber)
   const storyRecord = storyEnabled ? feedback.story?.[ticket.id] : undefined
   const finalReport = storyEnabled && released && waveNumber === ticketCount
+  const epilogue = releaseEpilogue(feedback.hadAutoDeploy)
   const storyBadge = training || practice ? { label: storyCopy.warmup, tone: "neutral" }
     : finalReport ? { label: storyCopy.protected, tone: "success" }
       : storyEnabled ? { label: scene.badge, tone: scene.tone } : undefined
@@ -340,7 +359,11 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
     const entry = feedback.story?.[task.id]
     if (!entry) return []
     const taskScene = storyForWave(index + 1)
-    const chat: StoryChatMessage[] = [{ ...taskScene.opening, sentAt: new Date(entry.startedAt) }]
+    const sentAt = new Date(entry.startedAt)
+    const chat: StoryChatMessage[] = [{ ...taskScene.opening, sentAt }]
+    for (const text of getWaveScenario(task.id)?.briefing ?? []) {
+      chat.push({ author: "mentor", mood: "guiding", text, sentAt })
+    }
     if (entry.choice !== undefined && entry.answeredAt) {
       const answer = taskScene.answers[entry.choice]
       chat.push({ author: "player", text: answer.label, sentAt: new Date(entry.answeredAt) })
@@ -348,7 +371,9 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
     }
     return chat
   }) : []
-  const visibleMessages = storyEnabled ? [...messages, ...storyMessages].sort((first, second) => first.sentAt.getTime() - second.sentAt.getTime()) : messages
+  const visibleMessages = storyEnabled
+    ? [...messages, ...storyMessages, ...(finalReport ? endingMessages : [])].sort((first, second) => first.sentAt.getTime() - second.sentAt.getTime())
+    : messages
   const completed = new Set([...feedback.completed, ...(released ? [ticket.id] : [])])
   const patch = ticket.patches.find(option => option.id === state.patchId)
   const vaultPatch = ticket.patches.find(option => option.id === "server-payment")
@@ -362,7 +387,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
   const showTrainingIntro = training && state.step === "explore" && !feedback.trainingIntroSeen
   const trainingMessage: IncomingMessage | undefined = training && !showTrainingIntro
     ? trainingChat.slice(0, tutorialStep ?? trainingChat.length).flat()[messages.length] : undefined
-  const typing = trainingMessage ?? incoming[0]
+  const typing = finalReport ? undefined : trainingMessage ?? incoming[0]
   const tutorialTarget = getTutorialTarget()
   const dockHint = tutorialTarget?.startsWith("dock-") && !dockPanel && !canSeeApp("chat")
 
@@ -466,7 +491,8 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
       const remainingMs = practice ? current.wave.remainingMs : Math.max(0, current.wave.remainingMs - Math.max(0, elapsed - current.wave.freezeMs))
       const deployed = !remainingMs
       const run = deployed ? { ...current.run, flawless: false, security: Math.max(0, current.run.security - friday.timeoutDamage) } : current.run
-      const next = { ...current, wave: { ...current.wave, remainingMs: deployed && run.security ? friday.retryMs : remainingMs,
+      const next = { ...current, hadAutoDeploy: current.hadAutoDeploy || deployed && !practice,
+        wave: { ...current.wave, remainingMs: deployed && run.security ? friday.retryMs : remainingMs,
         freezeMs, xrayMs, combo: deployed ? 1 : current.wave.combo }, run }
       feedbackRef.current = next
       setFeedback(next)
@@ -521,7 +547,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
     if (active !== "chat" || !chatBody.current) return
     const scroller = chatBody.current
     scroller.scrollTop = scroller.scrollHeight
-  }, [messages, typing, active, storyRecord])
+  }, [messages, typing, active, storyRecord, endingMessages])
 
   useEffect(() => {
     if (active === "code" && state.step === "patch") scrollToPatches()
@@ -571,7 +597,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
     }
   }
 
-  function focusApp(id: DeskApp) {
+  const focusApp = useCallback((id: DeskApp) => {
     activeRef.current = id
     setActive(id)
     setStack(current => current.at(-1) === id ? current : current.filter(item => item !== id).concat(id))
@@ -584,15 +610,27 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
         setFeedback(next)
       }
     }
-  }
+  }, [fridayMission, wavePhase])
 
-  function openApp(id: DeskApp) {
+  const openApp = useCallback((id: DeskApp) => {
     setDockPanel(null)
     setHidden(current => training ? apps.filter(app => app.id !== id).map(app => app.id) : current.filter(item => item !== id))
     setMaximized(current => current === id ? current : null)
     focusApp(id)
     window.requestAnimationFrame(() => desk.current?.querySelector<HTMLElement>(`#workos-${id}`)?.focus({ preventScroll: true }))
-  }
+  }, [focusApp, training])
+
+  useEffect(() => {
+    const line = epilogue[endingMessages.length]
+    if (!finalReport || !line) return
+    const timer = window.setTimeout(() => {
+      if (!endingMessages.length) openApp("chat")
+      const sentAt = new Date()
+      setEndingMessages(history => [...history, { ...line, sentAt }])
+      if (feedbackRef.current.sound) audio.play("chatPing")
+    }, endingMessages.length ? 950 : 650)
+    return () => window.clearTimeout(timer)
+  }, [audio, endingMessages.length, epilogue, finalReport, openApp])
 
   function hideApp(id: DeskApp) {
     setHidden(current => current.includes(id) ? current : [...current, id])
@@ -639,7 +677,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
     const action = { type: "mark", lineId: selectedLine } as const
     const marked = review(ticket, state, action)
     if (marked === state) {
-      notify("Сначала проверь оплату в WorkBrowser", "", "info", true)
+      notify("Сначала запусти проверку в WorkBrowser", "", "info", true)
       return
     }
     dispatch(action)
@@ -699,9 +737,10 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
     const current = feedbackRef.current
     if (!waveRunning || !current.wave) return
     const first = !current.earned.includes("matrix")
-    const captured = incidentPackets.some(item => item.id === packet.id) && !current.wave.captured.includes(packet.id)
+    const tracked = packets.some(item => item.id === packet.id)
+    const captured = tracked && !current.wave.captured.includes(packet.id)
       ? [...current.wave.captured, packet.id] : current.wave.captured
-    const newPacket = incidentPackets.some(item => item.id === packet.id) && !current.wave.credited.includes(packet.id)
+    const newPacket = tracked && !current.wave.credited.includes(packet.id)
     const next: Feedback = { ...current, wave: { ...current.wave, captured,
       credited: newPacket ? [...current.wave.credited, packet.id] : current.wave.credited,
       score: current.wave.score + (newPacket ? 100 : 0) }, earned: first ? [...current.earned, "matrix"] : current.earned }
@@ -715,7 +754,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
       notify(achievements.matrix.title, achievements.matrix.detail, "achievement")
       setIncoming(queue => [...queue, { author: "developer", mood: "smile", text: "Ого, ты поймал пакет прямо в полёте!" }])
     }
-    if (packet.unsafe || (patch?.checks.security.ok && state.step === "retest")) finishTrafficCheck()
+    if (packet.unsafe && state.step === "explore") finishTrafficCheck()
   }
 
   function sendTrainingOrder(action: "check" | "retest") {
@@ -794,6 +833,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
       setShake(0)
     }
     setMessages([])
+    setEndingMessages([])
     setIncoming(openingMessages(ticket))
     setNotices([])
     setUnread(false)
@@ -803,11 +843,23 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
   }
 
   function advanceWave() {
-    if (practice && wavePhase === "won") { beginShift(); return }
+    if (wavePhase === "won") {
+      if (practice || !nextTicket) {
+        beginShift()
+      } else {
+        const current = feedbackRef.current
+        onAdvanceWave(nextTicket, {
+          ...current,
+          wave: { ...initialWave, score: wave.score, combo: wave.combo },
+          run: { ...current.run, flawless: true, hint: false },
+        })
+      }
+      return
+    }
     if (wavePhase === "paused") {
       setWavePaused(false)
     } else if (wavePhase === "ready") {
-      const next = { ...feedbackRef.current, wave: { ...initialWave, started: true } }
+      const next = { ...feedbackRef.current, wave: { ...wave, started: true } }
       feedbackRef.current = next
       setFeedback(next)
       openApp("browser")
@@ -847,6 +899,12 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
 
   function beginShift() {
     onStartShift({ ...feedbackRef.current, tutorialDismissed: true })
+  }
+
+  function skipPractice() {
+    const current = feedbackRef.current
+    if (current.sound) audio.play("uiClick")
+    onStartShift({ ...current, tutorialDismissed: true }, true)
   }
 
   function openTrainingChat() {
@@ -908,7 +966,6 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
   return (
     <MotionConfig reducedMotion="user">
       <div className="workos" data-training={training || undefined} data-friday={fridayMission || undefined}
-        data-guide-code={guide?.target === "code" || undefined}
         data-game-over={fridayMission && wavePhase === "lost" || undefined}
         onClickCapture={event => {
           if (sound && event.target instanceof Element && !event.target.closest("[data-event-sound]") &&
@@ -917,7 +974,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
         onKeyDown={event => { if (event.key === "Escape") { closeDockPanel(); setNotices(queue => queue.slice(1)) } }}>
         <a className="skip-link" href="#desk">К рабочему столу</a>
         <header className="os-menu">
-          <a className="os-home" href="./" aria-label="WorkLab — главная" title="На главную">
+          <a className="os-home" href="#game" aria-label="WorkLab — к выбору миссий" title="Миссии">
             <svg width={18} height={18} viewBox="0 0 24 24" aria-hidden="true">
               <path fill="currentColor" d="M5 1h12l6 6v12a4 4 0 0 1-4 4H7l-6-6V5a4 4 0 0 1 4-4Z" />
               <path d="m6 8 4 4-4 4m7 0h5" fill="none" stroke="var(--os-dark)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
@@ -931,7 +988,6 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
               Волна {waveNumber}/{ticketCount}
               <span className="os-task-dots" aria-hidden="true">
                 {chapter.tickets.map(item => <i key={item.id} data-status={completed.has(item.id) ? "done" : item.id === ticket.id ? "current" : undefined} />)}
-                {chapter.upcoming.map(title => <i key={title} />)}
               </span>
             </span>}
             <button type="button" className="os-sound" data-event-sound aria-label="Звук" aria-pressed={sound}
@@ -943,8 +999,8 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
             <DeskClock />
           </div>
         </header>
-        {fridayMission && <FridayHud run={wave} phase={wavePhase} security={feedback.run.security} guide={guide} practice={practice}
-          onPause={() => setWavePaused(true)} />}
+        {scenario && <FridayHud service={scenario.service} finalReport={finalReport} run={wave} phase={wavePhase} security={feedback.run.security} guide={guide} practice={practice}
+          onPause={() => setWavePaused(true)} onSkip={practice ? skipPractice : undefined} />}
         <div className="os-notifications" aria-live="polite">
           <AnimatePresence mode="wait">
             {notice && <motion.aside key={notice.id} className="os-toast" data-tone={notice.tone} initial={reducedMotion ? false : { x: 26 }} animate={{ x: 0 }} exit={{ x: 16 }} transition={reducedMotion ? { duration: 0 } : spring}>
@@ -1042,12 +1098,23 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
               {showPatches && ticket.patches.length > 0 && (
                 <fieldset className="os-patches" ref={patchList}>
                   <legend>{fridayMission ? "Что отключить перед выпуском?" : "Выберите исправление"}</legend>
-                  {ticket.patches.map(option => (
-                    <label className="os-patch" key={option.id}>
-                      <input type="radio" name="review-patch" checked={option.id === state.patchId} onChange={() => choosePatch(option.id)} />
-                      <span><strong>{option.title}</strong><small>{option.detail}</small></span>
-                    </label>
-                  ))}
+                  {ticket.patches.map((option, index) => {
+                    const selected = option.id === state.patchId
+                    const result = selected && state.checks
+                      ? state.checks.security.ok && state.checks.feature.ok ? "pass" : "fail"
+                      : undefined
+                    return (
+                      <button type="button" className="os-patch" key={option.id} data-event-sound aria-pressed={selected} data-result={result}
+                        disabled={fridayMission && !waveRunning} onClick={() => { if (!selected) choosePatch(option.id) }}>
+                        <span className="os-patch-index" aria-hidden="true">{index + 1}</span>
+                        <strong>{option.title}</strong>
+                        <span className="os-patch-action">{result === "pass" ? <><Check size={14} aria-hidden="true" /> Проверено</> :
+                          result === "fail" ? <><CircleAlert size={14} aria-hidden="true" /> Не прошло</> :
+                            selected ? "Выбрано" : <>Применить <ArrowRight size={13} aria-hidden="true" /></>}</span>
+                        <PatchDetail text={option.detail} />
+                      </button>
+                    )
+                  })}
                 </fieldset>
               )}
             </div>
@@ -1064,7 +1131,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
 
           <AppWindow {...windowProps(apps[1])} shake={fridayMission ? 0 : shake}>
             <div className="os-browser-chrome">
-              <div className="os-address"><LockKeyhole size={14} aria-hidden="true" /><code>{fridayMission ? "Банк · Тестовый стенд оплаты" : training ? "https://demo.local/pay" : "https://shop.local/pay"}</code></div>
+              <div className="os-address"><LockKeyhole size={14} aria-hidden="true" /><code>{scenario ? `Банк · ${scenario.service}` : training ? "https://demo.local/pay" : "https://shop.local/pay"}</code></div>
               {!training && !fridayMission && <button type="button" className="os-icon-button" aria-label="Обновить предпросмотр" title="Обновить предпросмотр" onClick={() => {
                 setBrowserTab("preview")
                 setPaymentTried(false)
@@ -1079,19 +1146,19 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
               <span>Тестовые данные</span>
             </div>}
             <div className="os-window-scroll os-browser-scroll" key={released ? "release" : fridayMission ? "incident" : browserTab} ref={browserBody}>
-              {fridayMission && (wavePhase === "live" || wavePhase === "paused") && <>
-                <TrafficIntercept key={state.patchId ?? "before"} packets={(state.patchId && packetRuns[state.patchId]) || incidentPackets}
+              {scenario && (wavePhase === "live" || wavePhase === "paused") && <>
+                <TrafficIntercept key={state.patchId ?? "before"} action={scenario.action} packets={(state.patchId && scenario.patchPackets[state.patchId]) || packets}
                   paused={!waveRunning} guided={guide?.target === "traffic"} onLaunch={() => { if (sound) audio.play("packetLaunch") }}
                   onArrive={finishTrafficCheck} onCatch={catchTraffic} onEvidence={openCode} />
                 {wave.captured.length > 0 && <details className="friday-packet-log">
                   <summary>Журнал перехватов ({wave.captured.length})</summary>
-                  <ul>{incidentPackets.filter(packet => wave.captured.includes(packet.id)).map(packet => <li key={packet.id}>{packet.channel} · {packet.route}</li>)}</ul>
+                  <ul>{packets.filter(packet => wave.captured.includes(packet.id)).map(packet => <li key={packet.id}>{packet.channel} · {packet.route}</li>)}</ul>
                 </details>}
               </>}
               {released ? (
                 <div className="os-release">
-                  <motion.div className="os-release-stamp" initial={reducedMotion ? false : { opacity: .5, scale: 1.1, rotate: -7 }} animate={{ opacity: 1, scale: 1, rotate: 0 }} transition={spring}><Stamp size={18} aria-hidden="true" /> {fridayMission ? "АТАКА ОТБИТА" : "В ПРОДАКШН"}</motion.div>
-                  <h3>{fridayMission ? "Оплата защищена" : training ? "Обучение пройдено" : "Обновление выпущено"}</h3><p>{ticket.summary}</p>
+                  <motion.div className="os-release-stamp" initial={reducedMotion ? false : { opacity: .5, scale: 1.1, rotate: -7 }} animate={{ opacity: 1, scale: 1, rotate: 0 }} transition={spring}><Stamp size={18} aria-hidden="true" /> {finalReport ? storyCopy.attackStopped : fridayMission ? "ВОЛНА ЗАКРЫТА" : "В ПРОДАКШН"}</motion.div>
+                  <h3>{finalReport ? storyCopy.protected : training ? "Обучение пройдено" : "Обновление выпущено"}</h3><p>{ticket.summary}</p>
                 </div>
               ) : browserTab === "preview" && !fridayMission && (
                 <div className="os-payment-preview">
@@ -1123,7 +1190,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
               {keyIsolated && (browserTab === "checks" || released) && <p className="os-vault-status" data-isolated="true" role="status">Ключ изолирован на сервере</p>}
               {(!training || state.checks) && <div className="os-results" aria-live="polite">
                 <CheckTile label="Безопасность" result={state.checks?.security} />
-                <CheckTile label={fridayMission ? "Работа оплаты" : "Работа функции"} result={state.checks?.feature} />
+                <CheckTile label={scenario?.featureLabel ?? "Работа функции"} result={state.checks?.feature} />
               </div>}
             </div>
             {(!fridayMission || state.step === "stamp") && <footer className="os-window-footer os-browser-footer" data-has-tutorial={tutorialTarget === "browser" || undefined}>
@@ -1135,7 +1202,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
           </AppWindow>
 
           <AppWindow {...windowProps(apps[2])}>
-            {fridayMission && <AllowedHosts />}
+            {scenario && <AllowedHosts hosts={scenario.hosts} />}
             <div className="os-window-scroll os-messages" role="log" aria-label="Сообщения команды" ref={chatBody}>
               {visibleMessages.map((message, index) => (
                 <article className="os-message" data-player={message.author === "player" || undefined} key={`${message.sentAt.getTime()}:${message.author}:${index}`}>
@@ -1162,15 +1229,17 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
                 <button type="button" className="os-secondary" disabled={storyRecord.choice !== undefined} onClick={() => answerStory(0)}>{scene.answers[0].label}</button>
                 <button type="button" className="os-secondary" disabled={storyRecord.choice !== undefined} onClick={() => answerStory(1)}>{scene.answers[1].label}</button>
               </div>}
-              <motion.button type="button" className="os-secondary" whileHover={mentorAsked ? undefined : { y: -1 }} transition={spring} disabled={mentorAsked} onClick={askMentor}><Lightbulb size={16} aria-hidden="true" /> {mentorAsked ? "Подсказка в чате" : "Спросить Макса"}</motion.button>
+              <button type="button" className="os-secondary" disabled={mentorAsked} onClick={askMentor}><Lightbulb size={16} aria-hidden="true" /> {mentorAsked ? "Подсказка в чате" : "Спросить Макса"}</button>
             </footer>}
           </AppWindow>
         </main>
         {showTrainingIntro && <TrainingTeam onContinue={openTrainingChat} />}
         {training && released && <TrainingComplete onStart={beginShift} />}
-        {fridayMission && wavePhase !== "live" && <FridayBrief key={wavePhase} phase={wavePhase} run={wave} waveNumber={waveNumber} waveCount={ticketCount} practice={practice}
-          finalReport={finalReport} highMetrics={feedback.run.security >= 70 && feedback.run.stability >= 70} onAction={advanceWave} onReset={() => restart()} />}
-        {practiceTip && <PracticeDialog key={tipIndex} {...practiceTip} action="Попробовать" onAction={() => setLastPracticeTip(tipIndex)} />}
+        {scenario && wavePhase !== "live" && (!finalReport || endingMessages.length === epilogue.length) &&
+          <FridayBrief key={wavePhase} phase={wavePhase} run={wave} waveNumber={waveNumber} waveCount={ticketCount} practice={practice} scenario={scenario}
+          finalReport={finalReport} epilogue={epilogue}
+          onAction={advanceWave} onReset={beginShift} onSkip={practice && wavePhase === "ready" ? skipPractice : undefined} />}
+        {practiceTip && <PracticeDialog key={tipIndex} {...practiceTip} action="Попробовать" onAction={() => setLastPracticeTip(tipIndex)} onSkip={skipPractice} />}
         {fridayMission && wave.freezeMs > 0 && wavePhase === "live" && <div className="os-frost" aria-hidden="true">
           <span className="os-frost-wave" />
           <Snowflake className="os-frost-crystal" /><Snowflake className="os-frost-crystal" />

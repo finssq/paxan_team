@@ -180,9 +180,10 @@ const dockIconNames = {
 }
 
 export function DockIcon({ app }: { app: keyof typeof dockIconNames }) {
+  const imageVersion = app === "code" || app === "chat" ? "?v=light" : app === "browser" ? "?v=icns" : ""
   return (
     <>
-      <img src={`${import.meta.env.BASE_URL}icons/${app}.png`} alt={dockIconNames[app]} draggable={false}
+      <img src={`${import.meta.env.BASE_URL}icons/${app}.png${imageVersion}`} alt={dockIconNames[app]} draggable={false}
         className="h-11 w-11 object-contain drop-shadow-[0_4px_8px_rgba(0,0,0,0.4)] transition-transform" />
       <span className="os-dock-tooltip" aria-hidden="true">{dockIconNames[app]}</span>
     </>

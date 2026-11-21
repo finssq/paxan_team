@@ -6,8 +6,8 @@ import type { Packet } from "../data/friday"
 
 type FlightPhase = "ready" | "flying" | "frozen" | "finishing" | "arrived"
 
-export function TrafficIntercept({ packets, paused, guided, onLaunch, onCatch, onArrive, onEvidence }: {
-  packets: Packet[]; paused: boolean; guided?: boolean; onLaunch: () => void; onCatch: (packet: Packet) => void; onArrive: () => void; onEvidence: () => void
+export function TrafficIntercept({ packets, action, paused, guided, onLaunch, onCatch, onArrive, onEvidence }: {
+  packets: Packet[]; action: string; paused: boolean; guided?: boolean; onLaunch: () => void; onCatch: (packet: Packet) => void; onArrive: () => void; onEvidence: () => void
 }) {
   const copy = friday.traffic
   const reducedMotion = useReducedMotion()
@@ -83,7 +83,7 @@ export function TrafficIntercept({ packets, paused, guided, onLaunch, onCatch, o
       <header className="traffic-heading">
         <h3>{copy.title}</h3>
         <button className="os-primary os-training-action" type="button" data-event-sound data-next-action={guided && (phase === "ready" || phase === "arrived") || undefined} disabled={paused || phase === "frozen" || inFlight} onClick={event => send(event.detail === 0)}>
-          <WalletCards size={17} aria-hidden="true" /> {inFlight ? copy.sending : copy.send}
+          <WalletCards size={17} aria-hidden="true" /> {inFlight ? copy.sending : action}
         </button>
       </header>
       {packets.map((packet, index) => {

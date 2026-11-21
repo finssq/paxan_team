@@ -1,4 +1,5 @@
 import type { Chapter, Ticket } from "../types/game"
+import { diagnosticWave, receiptWave } from "./extraWaves.ts"
 
 export type Packet = {
   id: string
@@ -10,6 +11,19 @@ export type Packet = {
   unsafe?: boolean
 }
 
+type Host = { name: string; purpose: string }
+
+export type WaveScenario = {
+  ticket: Ticket
+  service: string
+  action: string
+  featureLabel: string
+  hosts: Host[]
+  briefing: string[]
+  packets: Packet[]
+  patchPackets: Record<string, Packet[]>
+}
+
 export const friday = {
   durationMs: 195_000,
   flightMs: 5_000,
@@ -19,23 +33,13 @@ export const friday = {
   xraySweepMs: 400,
   freezeMs: 15_000,
   charges: 2,
-  service: "Оплата",
   codeViewHelp: "Переключай вид: «Перевод» объясняет код на русском, «Код» показывает исходник",
   abilities: {
     xray: { label: "X-Ray Импульс", hint: "Сканирует код и на 5 секунд подсвечивает опасную строку с утечкой. Не сбрасывает комбо." },
     freeze: { label: "Заморозка деплоя", hint: "На 15 секунд останавливает таймер автодеплоя Дениса. Даёт время спокойно найти ошибку." },
   },
-  hosts: [
-    { name: "pay-core.demo", purpose: "Обрабатывает учебную оплату" },
-    { name: "metrics.demo", purpose: "Принимает технические счётчики без платёжных данных" },
-  ],
-  briefing: [
-    "Денис добавил модуль к оплате. Запусти **тестовый заказ** в WorkBrowser и посмотри, по каким каналам уходят данные.",
-    "Поймай пакет на кабеле или кнопкой **«Заморозить пакет»**. Сверь адрес назначения со списком банка в **WorkChat**.",
-    "Найди в **WorkCode**, где собираются данные для этого канала. Отметь строку, выбери исправление и повтори оплату.",
-  ],
   traffic: {
-    title: "Перехват трафика", send: "Провести тестовую оплату", sending: "Пакеты в пути",
+    title: "Перехват трафика", sending: "Пакеты в пути",
     instruction: "Нажми на пакет, чтобы перехватить!", freeze: "Заморозить пакет", caught: "ПЕРЕХВАЧЕНО",
     inspector: "Инспектор пакета", safe: "ЗАЩИЩЕНО", danger: "УТЕЧКА", release: "Отпустить пакет",
     evidence: "Зафиксировать улику в коде", arrived: "Пакеты дошли до адресатов. Тест можно повторить.",
@@ -53,8 +57,6 @@ const reportPacket: Packet = {
   fields: [{ key: "orderId", value: "DEMO-108" }, { key: "cardData", value: "DEMO-CARD-108", warning: true }],
   explanation: "В пакете есть учебные карточные данные. Сверь адрес со списком банка и найди, где в коде добавляется поле cardData.", unsafe: true,
 }
-
-export const incidentPackets = [paymentPacket, reportPacket]
 
 const securityFails = { ok: false, detail: "Модуль отчётов всё ещё отправляет карточные данные на сторонний адрес." }
 const securityPasses = { ok: true, detail: "Карточные данные больше не попадают в канал отчётов." }
@@ -116,16 +118,38 @@ const pausedPacket: Packet = {
   fields: [{ key: "status", value: "paused" }], explanation: "Проверка статуса доступна, но оплата и отчёты приостановлены.",
 }
 
-export const packetRuns: Record<string, Packet[]> = {
-  "disable-reports": [{ ...paymentPacket, explanation: "Канал отчётов отключён. Разрешённый шлюз получает только токен, оплата работает." }],
-  "pause-release": [pausedPacket],
+const paymentWave: WaveScenario = {
+  ticket: incidentTicket,
+  service: "Оплата",
+  action: "Провести тестовую оплату",
+  featureLabel: "Работа оплаты",
+  hosts: [
+    { name: "pay-core.demo", purpose: "Обрабатывает учебную оплату" },
+    { name: "metrics.demo", purpose: "Принимает технические счётчики без платёжных данных" },
+  ],
+  briefing: [
+    "Денис добавил модуль к оплате. Запусти **тестовый заказ** в WorkBrowser и посмотри, по каким каналам уходят данные.",
+    "Поймай пакет на кабеле или кнопкой **«Заморозить пакет»**. Сверь адрес назначения со списком банка в **WorkChat**.",
+    "Найди в **WorkCode**, где собираются данные для этого канала. Отметь строку, выбери исправление и повтори оплату.",
+  ],
+  packets: [paymentPacket, reportPacket],
+  patchPackets: {
+    "disable-reports": [{ ...paymentPacket, explanation: "Канал отчётов отключён. Разрешённый шлюз получает только токен, оплата работает." }],
+    "pause-release": [pausedPacket],
+  },
 }
 
+const scenarios: WaveScenario[] = [paymentWave, diagnosticWave, receiptWave]
+
 export const fridayChapter: Chapter = {
-  title: "Перехват кода", tickets: [incidentTicket], upcoming: ["Двойное списание", "Поддельный платёжный модуль"],
+  title: "Перехват кода", tickets: scenarios.map(scenario => scenario.ticket), upcoming: [],
 }
 
 export const practiceTicket: Ticket = { ...incidentTicket, id: "friday-practice", title: "Пробная волна" }
+
+export function getWaveScenario(ticketId: string) {
+  return ticketId === practiceTicket.id ? paymentWave : scenarios.find(scenario => scenario.ticket.id === ticketId)
+}
 
 export const practiceTips = [
   { title: "1/4 · Перехват", text: "Проведи тестовую оплату в WorkBrowser. На каждый пакет есть 5 секунд. Нажми на капсулу или «Заморозить пакет». Инспектор покажет адрес и данные. Отпусти пакет A, чтобы запустить B. Тест можно повторять сколько угодно." },

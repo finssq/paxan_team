@@ -43,6 +43,7 @@ type Metrics = { security: number; stability: number }
 type Run = Metrics & { hint: boolean; flawless: boolean }
 export type Feedback = {
   sound: boolean
+  hadAutoDeploy: boolean
   tutorialDismissed: boolean
   trainingIntroSeen: boolean
   wave?: WaveRun
@@ -61,15 +62,15 @@ const changes: Partial<Record<FeedbackEvent, Metrics>> = {
   clean: { security: 10, stability: 10 },
 }
 const initialRun: Run = { security: 80, stability: 85, hint: false, flawless: true }
-const initial: Feedback = { sound: true, tutorialDismissed: false, trainingIntroSeen: false, earned: [], completed: [], streak: 0, run: initialRun }
+const initial: Feedback = { sound: true, hadAutoDeploy: false, tutorialDismissed: false, trainingIntroSeen: false, earned: [], completed: [], streak: 0, run: initialRun }
 const soundKey = "worklab.sound.v1"
 
-export function readSoundPreference(fallback = true) {
+export function readSoundPreference() {
   try {
     const saved = localStorage.getItem(soundKey)
     if (saved === "true" || saved === "false") return saved === "true"
   } catch {}
-  return fallback
+  return true
 }
 
 export function saveSoundPreference(enabled: boolean) {
@@ -108,10 +109,11 @@ export function readFeedback(saved: string | null, ticketIds: string[], task: st
     const run = data.run
     return {
       sound: data.sound !== false,
+      hadAutoDeploy: data.hadAutoDeploy === true,
       tutorialDismissed: typeof data.tutorialDismissed === "boolean"
         ? data.tutorialDismissed : completed.includes(ticketIds[0] ?? ""),
       trainingIntroSeen: data.trainingIntroSeen === true,
-      wave: readWave(data.wave),
+      wave: readWave(data.wave, task),
       story: readStory(data.story, ticketIds),
       earned,
       completed,

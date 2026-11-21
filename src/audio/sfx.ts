@@ -14,6 +14,20 @@ const effects = {
   success: [[392, 0, .24, .033], [494, .035, .24, .03], [587, .075, .24, .025]],
   achievement: [[155, 0, .08, .034, 100, "triangle"], [784, .065, .18, .032], [988, .10, .23, .027], [1175, .14, .28, .024]],
   waveWin: [[96, 0, .19, .085, 60, "triangle"], [142, .009, .07, .038, 82, "triangle"], [392, 0.45, .32, .037], [494, .49, .35, .034], [587, .53, .39, .031]],
+  officeScan: [[440, 0, .1, .033, 660, "triangle"], [990, .075, .19, .027]],
+  officeEmp: [[122, 0, .32, .066, 38, "triangle"], [635, .012, .16, .029, 105, "sawtooth"]],
+  officeGate: [[170, 0, .18, .033, 90, "triangle"], [510, .11, .16, .023], [765, .17, .24, .027]],
+  officeAlert: [[235, 0, .09, .035, 185, "triangle"]],
+  officeWin: [[262, 0, .37, .041], [392, .09, .45, .038], [494, .18, .43, .032], [784, .32, .58, .028]],
+  officeRotate: [[470, 0, .05, .032, 230, "triangle"]],
+  officeNote1: [[392, 0, .22, .04, undefined, "triangle"]],
+  officeNote2: [[440, 0, .22, .04, undefined, "triangle"]],
+  officeNote3: [[523, 0, .22, .04, undefined, "triangle"]],
+  officeNote4: [[587, 0, .22, .04, undefined, "triangle"]],
+  officeNote5: [[659, 0, .22, .04, undefined, "triangle"]],
+  officeFrequency: [[640, 0, .065, .039, 920], [1220, .043, .11, .025]],
+  officeHackError: [[176, 0, .13, .043, 100, "triangle"], [130, .08, .13, .024]],
+  officeMessage: [[740, 0, .08, .022], [988, .05, .14, .024]],
 } as const satisfies Record<string, readonly Tone[]>
 
 export function createSfx(enabled = true) {

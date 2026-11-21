@@ -1,4 +1,4 @@
-import { friday, incidentPackets } from "../data/friday.ts"
+import { friday, getWaveScenario } from "../data/friday.ts"
 
 export type WaveRun = {
   started: boolean; remainingMs: number; captured: string[]; rosterSeen: boolean
@@ -14,15 +14,16 @@ function numberInRange(value: unknown, min: number, max: number, fallback: numbe
   return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max ? value : fallback
 }
 
-export function readWave(value: unknown): WaveRun | undefined {
-  if (!value || typeof value !== "object" || !("started" in value) || value.started !== true ||
+export function readWave(value: unknown, task: string): WaveRun | undefined {
+  const scenario = getWaveScenario(task)
+  if (!scenario || !value || typeof value !== "object" || !("started" in value) || typeof value.started !== "boolean" ||
     !("remainingMs" in value) || typeof value.remainingMs !== "number" || !Number.isInteger(value.remainingMs) ||
     value.remainingMs < 0 || value.remainingMs > friday.durationMs || !("captured" in value) || !Array.isArray(value.captured)) return undefined
   const fields = value as Record<string, unknown>
-  const captured = incidentPackets.filter(packet => (fields.captured as unknown[]).includes(packet.id)).map(packet => packet.id)
+  const captured = scenario.packets.filter(packet => (fields.captured as unknown[]).includes(packet.id)).map(packet => packet.id)
   const credited = Array.isArray(fields.credited) ? fields.credited : captured
-  return { started: true, remainingMs: value.remainingMs, captured, rosterSeen: fields.rosterSeen === true,
-    credited: incidentPackets.filter(packet => credited.includes(packet.id)).map(packet => packet.id),
+  return { started: value.started, remainingMs: value.remainingMs, captured, rosterSeen: fields.rosterSeen === true,
+    credited: scenario.packets.filter(packet => credited.includes(packet.id)).map(packet => packet.id),
     score: numberInRange(fields.score, 0, 100_000, 0), combo: numberInRange(fields.combo, 1, 3, 1),
     xrayCharges: numberInRange(fields.xrayCharges, 0, friday.charges, friday.charges), freezeCharges: numberInRange(fields.freezeCharges, 0, friday.charges, friday.charges),
     xrayMs: numberInRange(fields.xrayMs, 0, friday.xrayMs + friday.xraySweepMs, 0), freezeMs: numberInRange(fields.freezeMs, 0, friday.freezeMs, 0) }

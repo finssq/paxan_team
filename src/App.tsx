@@ -1,28 +1,31 @@
-import { ArrowRight, CircleAlert, CircleCheck, Code2, Gamepad2, Map, Mouse, Play, RotateCcw, ShieldCheck, Smartphone, Timer, UserRound } from "lucide-react"
-import { useEffect, useState } from "react"
+import { ArrowRight, CircleAlert, CircleCheck, Code2, Gamepad2, Map, Smartphone, UserRound } from "lucide-react"
+import { lazy, Suspense, useEffect, useState } from "react"
 import { createSfx } from "./audio/sfx"
+import MissionHub from "./components/MissionHub"
 import sponsorLogo from "./centr-invest.svg"
 import { chapter, paymentPreview } from "./data/paymentPreview"
 import { fridayChapter, incidentTicket, practiceTicket } from "./data/friday"
 import { trainingTicket } from "./data/training"
 import workLabMark from "./favicon.svg"
-import { clearShift, initialReview, readShift, saveShift } from "./game/review"
-import { readFeedback, readSoundPreference, saveSoundPreference } from "./game/feedback"
+import { initialReview, readShift, saveShift } from "./game/review"
+import { readFeedback, readSoundPreference } from "./game/feedback"
+import type { Feedback } from "./game/feedback"
+import { initialWave } from "./game/incidentWave"
+import type { Ticket } from "./types/game"
 import { Card, CodeSource } from "./ui"
 
 const bootDuration = 1400
+const RedTeamGame = lazy(() => import("./redteam/RedTeamGame"))
 
 function readCurrentShift() {
   const saved = readShift(fridayChapter, practiceTicket, ["friday-profile", "friday-transfer", "friday-traffic"])
   if (saved) return saved
   const previous = readShift(chapter, trainingTicket)
-  if (previous?.ticket.id === trainingTicket.id) {
-    return { ticket: practiceTicket, state: initialReview, feedback: { ...readFeedback(null, [], practiceTicket.id, false), sound: previous.feedback.sound } }
-  }
+  const ticket = previous?.ticket.id === trainingTicket.id ? practiceTicket : incidentTicket
   return previous && {
-    ticket: incidentTicket,
+    ticket,
     state: initialReview,
-    feedback: { ...readFeedback(null, [], incidentTicket.id, false), sound: previous.feedback.sound },
+    feedback: readFeedback(null, [], ticket.id, false),
   }
 }
 
@@ -49,13 +52,18 @@ function DeskStartup({ audio }: { audio: ReturnType<typeof createSfx> }) {
     }
   }, [])
 
+  function enterWave(ticket: Ticket, feedback: Feedback) {
+    saveShift(ticket, initialReview, feedback)
+    setSaved({ ticket, state: initialReview, feedback })
+  }
+
   if (Desk && Desk !== "failed") {
     const ticket = saved?.ticket ?? practiceTicket
-    return <Desk key={ticket.id} chapter={fridayChapter} ticket={ticket} saved={saved} audio={audio} training={false} onStartShift={feedback => {
+    return <Desk key={ticket.id} chapter={fridayChapter} ticket={ticket} saved={saved} audio={audio} training={false} onAdvanceWave={enterWave} onStartShift={(feedback, startImmediately) => {
       const firstTask = incidentTicket
-      const next = { ...feedback, wave: undefined, completed: [], streak: 0, run: readFeedback(null, [], firstTask.id, false).run }
-      saveShift(firstTask, initialReview, next)
-      setSaved({ ticket: firstTask, state: initialReview, feedback: next })
+      const wave = startImmediately ? { ...initialWave, started: true } : undefined
+      const next = { ...feedback, wave, story: undefined, hadAutoDeploy: false, completed: [], streak: 0, run: readFeedback(null, [], firstTask.id, false).run }
+      enterWave(firstTask, next)
     }} />
   }
 
@@ -157,76 +165,56 @@ function CodePreview() {
   )
 }
 
-function GameSelection({ onStart }: { onStart: () => void }) {
+function OfficeMap() {
   return (
-    <main className="shell game-selection" id="main" tabIndex={-1}>
-      <header>
-        <h1>Выбери игру</h1>
-        <p>Две стороны кибербезопасности: защита кода за рабочим столом и полевой аудит офиса.</p>
-      </header>
-      <div className="game-options">
-        <article className="game-option" aria-labelledby="blue-game-title">
-          <div className="game-preview">
-            <span className="game-team">01 · Blue Team</span>
-            <div className="game-editor" aria-hidden="true">
-              <div className="game-editor-bar"><i /><i /><i /><span>WorkCode</span></div>
-              <code>const order = getOrder();</code>
-              <code>if (!order) return;</code>
-              <code data-warning>sendReport(order);</code>
-              <code>return confirm(order);</code>
-            </div>
-            <div className="game-traffic" aria-hidden="true"><span>Перехват трафика</span><i /></div>
-          </div>
-          <div className="game-option-body">
-            <h2 id="blue-game-title">{fridayChapter.title}</h2>
-            <p>Перехватывай трафик, находи утечки в коде Дениса и спаси релиз банка до 18:00.</p>
-            <ul className="game-tags" role="list">
-              <li><ShieldCheck size={14} aria-hidden="true" /> Аудит кода</li>
-              <li><Mouse size={14} aria-hidden="true" /> Мышь / Тач</li>
-              <li><Timer size={14} aria-hidden="true" /> 5–7 мин</li>
-            </ul>
-            <div className="game-option-footer"><button className="game-action" type="button" onClick={onStart}>Начать игру <ArrowRight size={18} aria-hidden="true" /></button></div>
-          </div>
-        </article>
-        <article className="game-option" aria-labelledby="red-game-title">
-          <div className="game-preview game-preview-office">
-            <span className="game-team">02 · Red Team</span>
-            <svg className="game-office" viewBox="0 0 360 115" aria-hidden="true">
-              <path className="game-office-walls" d="M25 12H335V105H25ZM112 12V48M112 72V105M25 66H73M137 65H224M164 12V38M224 12V74M224 96V105M283 64H335" />
-              <path className="game-office-furniture" d="M40 29h38v18H40zM43 80h24v14H43zM121 28h26v17h-26zM177 26h27v20h-27zM238 79h22v15h-22zM298 75h26v6h-26zM298 87h26v6h-26z" />
-              <path className="game-office-cone" d="M286 37l-51 60a79 79 0 0 0 77 15Z" />
-              <circle cx="286" cy="37" r="3.5" fill="#f87171" />
-              <circle className="game-office-ring" cx="198" cy="84" r="10" />
-              <circle cx="198" cy="84" r="3" fill="#ff8d8d" />
-              <circle className="game-office-agent" cx="92" cy="84" r="4" />
-            </svg>
-          </div>
-          <div className="game-option-body">
-            <h2 id="red-game-title">Аудит офиса</h2>
-            <p>Проберись через камеры и дронов охраны, найди 3 дыры в офисе и дойди до ядра серверной.</p>
-            <ul className="game-tags" role="list">
-              <li><Map size={14} aria-hidden="true" /> 2D-стелс</li>
-              <li><Gamepad2 size={14} aria-hidden="true" /> WASD / Джойстик</li>
-              <li><Code2 size={14} aria-hidden="true" /> Без кода</li>
-            </ul>
-            <div className="game-option-footer"><span className="game-status">Скоро</span></div>
-          </div>
-        </article>
+    <svg className="game-office" viewBox="0 0 360 115" aria-hidden="true">
+      <path className="game-office-walls" d="M25 12H335V105H25ZM112 12V48M112 72V105M25 66H73M137 65H224M164 12V38M224 12V74M224 96V105M283 64H335" />
+      <path className="game-office-furniture" d="M40 29h38v18H40zM43 80h24v14H43zM121 28h26v17h-26zM177 26h27v20h-27zM238 79h22v15h-22zM298 75h26v6h-26zM298 87h26v6h-26z" />
+      <path className="game-office-cone" d="M286 37l-51 60a79 79 0 0 0 77 15Z" />
+      <circle cx="286" cy="37" r="3.5" fill="#f87171" />
+      <circle className="game-office-ring" cx="198" cy="84" r="10" />
+      <circle cx="198" cy="84" r="3" fill="#ff8d8d" />
+      <circle className="game-office-agent" cx="92" cy="84" r="4" />
+    </svg>
+  )
+}
+
+function HeroPreview() {
+  const [office, setOffice] = useState(false)
+
+  return (
+    <div className="hero-previews">
+      <div className="hero-preview-switch" role="group" aria-label="Превью игр">
+        <button type="button" aria-pressed={!office} onClick={() => setOffice(false)}>Blue Team · Код</button>
+        <button type="button" aria-pressed={office} onClick={() => setOffice(true)}>Red Team · Офис</button>
       </div>
-    </main>
+      <div className="hero-preview-panels" data-office={office}>
+        <div className="hero-code-panel" inert={office}><CodePreview /></div>
+        <section className="hero-office-panel" inert={!office} aria-label="Превью проникновения в офис">
+          <Card className="preview hero-office-card">
+            <div className="preview-bar"><span className="preview-app"><Map size={20} aria-hidden="true" /> План офиса</span></div>
+            <div className="game-preview-office hero-office-map"><OfficeMap /></div>
+            <div className="preview-footer" data-tone="warning">
+              <CircleAlert size={18} aria-hidden="true" /> Найдены уязвимости: незаблокированный ноутбук и открытый Wi-Fi
+            </div>
+          </Card>
+        </section>
+      </div>
+    </div>
   )
 }
 
 function getRoute() {
   const hash = window.location.hash
   if (hash === "#desk") return "desk"
+  if (hash === "#redteam") return "redteam"
   if (hash === "#game" || hash === "#worklab") return "modules"
   return "home"
 }
 
 export function App() {
   const [route, setRoute] = useState(getRoute)
-  const [audio] = useState(() => createSfx(readSoundPreference(readCurrentShift()?.feedback.sound)))
+  const [audio] = useState(() => createSfx(readSoundPreference()))
 
   useEffect(() => {
     const events = ["pointerdown", "click", "keydown"] as const
@@ -237,7 +225,7 @@ export function App() {
     }
   }, [audio])
   useEffect(() => {
-    document.title = route === "desk" ? `${fridayChapter.title} · WorkLab` : "WorkLab"
+    document.title = route === "desk" ? `${fridayChapter.title} · WorkLab` : route === "redteam" ? "Проникновение в офис · WorkLab" : "WorkLab"
   }, [route])
 
   useEffect(() => {
@@ -250,16 +238,15 @@ export function App() {
     return () => window.removeEventListener("hashchange", followRoute)
   }, [])
 
-  function startDesk() {
-    saveSoundPreference(readSoundPreference(readCurrentShift()?.feedback.sound))
-    clearShift()
-    window.location.hash = "#desk"
+  if (route === "desk") return <DeskStartup audio={audio} />
+  if (route === "redteam") {
+    return <Suspense fallback={<main className="boot-screen" role="status">Загружаем офис…</main>}>
+      <RedTeamGame audio={audio} />
+    </Suspense>
   }
 
-  if (route === "desk") return <DeskStartup audio={audio} />
-
   const choosingGame = route === "modules"
-  const saved = choosingGame ? null : readCurrentShift()
+  const saved = readCurrentShift()
 
   return (
     <div className="site">
@@ -275,7 +262,7 @@ export function App() {
           </nav>
         </div>
       </header>
-      {choosingGame ? <GameSelection onStart={startDesk} /> : <main className="shell home" id="main" tabIndex={-1}>
+      {choosingGame ? <MissionHub canResume={Boolean(saved)} officePreview={<OfficeMap />} /> : <main className="shell home" id="main" tabIndex={-1}>
         <section className="hero">
           <div className="hero-copy">
             <div className="sponsor-badge">
@@ -286,19 +273,19 @@ export function App() {
               Work<span className="brand-accent">Lab</span>
               <span className="brand-sheen" aria-hidden="true">WorkLab</span>
             </h1>
-            <p>Браузерная игра о кибербезопасности. Проведи смену в роли инженера по безопасности приложений.</p>
+            <p>Испытай себя в кибербезопасности с обеих сторон. Останови утечку кода до релиза — или прокрадись в офис банка и вскрой его слабые места.</p>
             <div className="hero-actions">
-              {saved ? <>
-                <a className="hero-start" href="#desk" onClick={audio.unlock}><Play size={19} aria-hidden="true" /> <span>Продолжить играть <small>{fridayChapter.title}</small></span></a>
-                <a className="hero-restart" href="#game"><RotateCcw size={17} aria-hidden="true" /> Начать заново</a>
-              </> : <a className="hero-start" href="#game"><Play size={19} aria-hidden="true" /> Начать играть</a>}
+              <a className="hero-start" href="#game">Выбрать игру <ArrowRight size={19} aria-hidden="true" /></a>
+              {saved && <a className="hero-continue" href="#desk">Продолжить: {fridayChapter.title}</a>}
+              <a className="hero-continue hero-mission-direct" href="#redteam">Миссия 2: Red Team →</a>
             </div>
-            <ul className="hero-meta" aria-label="О смене" role="list">
+            <ul className="hero-meta" aria-label="Об играх" role="list">
+              <li><Gamepad2 size={14} aria-hidden="true" /> 2 игры</li>
               <li><UserRound size={14} aria-hidden="true" /> Без регистрации</li>
               <li><Smartphone size={14} aria-hidden="true" /> ПК и телефон</li>
             </ul>
           </div>
-          <CodePreview />
+          <HeroPreview />
         </section>
       </main>}
       <footer className="site-footer">

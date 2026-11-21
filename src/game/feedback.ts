@@ -1,7 +1,5 @@
 import type { ReviewStep } from "./review"
 
-export const shiftDeadline = "18:45"
-
 export const questSteps: { label: string; completed: ReviewStep[] }[] = [
   { label: "Запустить проверку", completed: ["locate", "patch", "retest", "stamp", "released"] },
   { label: "Найти уязвимую строку", completed: ["patch", "retest", "stamp", "released"] },
@@ -10,26 +8,26 @@ export const questSteps: { label: string; completed: ReviewStep[] }[] = [
 ]
 
 export const characters = {
-  developer: { name: "Разработчик", hair: "#27273d", skin: "#eab28f", shirt: "#4873af", background: "#2a406a" },
-  mentor: { name: "Наставник", hair: "#d1bcca", skin: "#b67964", shirt: "#447e71", background: "#283e40" },
+  developer: { name: "Денис", role: "Middle-разработчик" },
+  mentor: { name: "Макс", role: "Senior AppSec" },
 }
 
 export type Mood = "smile" | "alarmed" | "shocked" | "calm" | "guiding" | "approve"
 export type Message = { author: keyof typeof characters; mood: Mood; text: string }
 
-export const mentorGreeting: Message = { author: "mentor", mood: "calm", text: "Я на связи, если понадобится помощь." }
+export const mentorGreeting: Message = { author: "mentor", mood: "calm", text: "Сначала проверка, потом аплодисменты. Если застрянешь, подскажу, куда смотреть." }
 
 export const reactions = {
-  discovery: { author: "developer", mood: "alarmed", text: "Ключ в браузере? Хорошо, что заметили до выпуска." },
-  security: { author: "developer", mood: "alarmed", text: "В виджете ключа уже нет, но проверка всё ещё его видит." },
-  feature: { author: "developer", mood: "shocked", text: "Стоп, оплата перестала работать. Покупатель даже чек не получит." },
-  clean: { author: "mentor", mood: "approve", text: "Обе проверки прошли. Теперь можно выпускать обновление." },
-  release: { author: "developer", mood: "smile", text: "Выпустили! И оплата работает. Вот теперь можно выдохнуть." },
+  discovery: { author: "developer", mood: "alarmed", text: "Ключ в браузере?! Нейронка же сказала, что всё чисто! Успеем поправить?" },
+  security: { author: "developer", mood: "alarmed", text: "Я думал, нейронка разрулила! Проверка всё ещё видит ключ. Времени в обрез!!" },
+  feature: { author: "developer", mood: "shocked", text: "Прод горит!! Оплата сломалась, чек не приходит. Нам это ещё показывать!" },
+  clean: { author: "mentor", mood: "approve", text: "Обе проверки зелёные. Теперь у тебя есть основания выпускать обновление." },
+  release: { author: "developer", mood: "smile", text: "Выпустили!! Оплата работает, можно показывать на стриме!" },
 } satisfies Record<string, Message>
 
 export const achievements = {
   skeptical: { title: "Не верю ИИ", detail: "Обнаружена первая уязвимость за зелёным бейджем ИИ." },
-  independent: { title: "Чистая работа", detail: "Задача выпущена без подсказки наставника." },
+  independent: { title: "Чистая работа", detail: "Задача выпущена без подсказки Макса." },
   precise: { title: "Хирургический фикс", detail: "Уязвимость закрыта, функция по-прежнему работает." },
   streak: { title: "Серия без ошибок", detail: "Две разные задачи подряд выпущены без потерь метрик." },
   shift: { title: "Смена закрыта", detail: "Все задачи главы выпущены." },

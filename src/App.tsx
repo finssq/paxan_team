@@ -1,11 +1,22 @@
-import { CircleAlert, CircleCheck, Clock3, Code2, Play, Smartphone, UserRound } from "lucide-react"
-import { lazy, Suspense, useEffect, useState } from "react"
+import { ArrowRight, CircleAlert, CircleCheck, Clock3, Code2, LockKeyhole, Play, Smartphone, UserRound } from "lucide-react"
+import { lazy, Suspense, useEffect, useRef, useState } from "react"
+import type { FormEvent } from "react"
 import sponsorLogo from "./centr-invest.svg"
 import { chapter, paymentPreview, paymentTicket } from "./data/paymentPreview"
 import workLabMark from "./favicon.svg"
 import { Card, CodeSource } from "./ui"
 
 const ReviewDesk = lazy(() => import("./game/ReviewDesk"))
+const nicknameKey = "worklab.nickname.v1"
+const nicknameLimit = 32
+
+function loadNickname() {
+  try {
+    return window.localStorage.getItem(nicknameKey)?.trim().slice(0, nicknameLimit) ?? ""
+  } catch {
+    return ""
+  }
+}
 
 function CodePreview() {
   const [activeHint, setActiveHint] = useState<number | null>(null)
@@ -90,29 +101,83 @@ function CodePreview() {
   )
 }
 
-function isGameRoute() {
-  return window.location.hash === "#game" || window.location.hash === "#desk"
+function DifficultySelection() {
+  const heading = useRef<HTMLHeadingElement>(null)
+  const [nickname, setNickname] = useState(loadNickname)
+
+  useEffect(() => {
+    heading.current?.focus({ preventScroll: true })
+  }, [])
+
+  function startGame(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const playerName = nickname.trim()
+    try {
+      if (playerName) window.localStorage.setItem(nicknameKey, playerName)
+      else window.localStorage.removeItem(nicknameKey)
+    } catch {}
+    window.location.hash = "#desk"
+  }
+
+  return (
+    <main className="shell difficulty" id="main" tabIndex={-1}>
+      <h1 tabIndex={-1} ref={heading}>Выбери сложность</h1>
+      <form className="difficulty-form" onSubmit={startGame}>
+        <label className="difficulty-nickname">
+          <span>Никнейм <small>необязательно</small></span>
+          <input name="nickname" placeholder="Введи свой никнейм" autoComplete="nickname" maxLength={nicknameLimit} value={nickname}
+            onChange={event => setNickname(event.target.value)} />
+        </label>
+        <div className="difficulty-options">
+          <button className="difficulty-option surface" type="submit" aria-labelledby="easy-title" aria-describedby="easy-description">
+            <span>
+              <span id="easy-title" className="difficulty-label">Простой</span>
+              <span id="easy-description" className="difficulty-description">Макс поможет разобраться с задачами первой смены.</span>
+            </span>
+            <ArrowRight size={22} aria-hidden="true" />
+          </button>
+          {["Средний", "Сложный"].map(label => (
+            <button key={label} className="difficulty-option surface" type="button" disabled>
+              <span>
+                <span className="difficulty-label">{label}</span>
+                <span className="difficulty-status" aria-hidden="true">Пока недоступен</span>
+              </span>
+              <LockKeyhole size={20} aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+      </form>
+    </main>
+  )
+}
+
+function getRoute() {
+  const hash = window.location.hash
+  if (hash === "#desk") return "desk"
+  if (hash === "#game") return "difficulty"
+  return "home"
 }
 
 export function App() {
-  const [playing, setPlaying] = useState(isGameRoute)
+  const [route, setRoute] = useState(getRoute)
 
   useEffect(() => {
     function followRoute() {
-      const hash = window.location.hash
-      setPlaying(isGameRoute())
-      if (hash !== "#main" && hash !== "#desk") window.scrollTo(0, 0)
+      setRoute(getRoute())
+      if (window.location.hash !== "#main") window.scrollTo(0, 0)
     }
 
     window.addEventListener("hashchange", followRoute)
     return () => window.removeEventListener("hashchange", followRoute)
   }, [])
 
-  if (playing) return (
+  if (route === "desk") return (
     <Suspense fallback={<main className="shell" aria-busy="true">Открываем рабочий стол…</main>}>
       <ReviewDesk chapter={chapter} ticket={paymentTicket} />
     </Suspense>
   )
+
+  const choosingDifficulty = route === "difficulty"
 
   return (
     <div className="site">
@@ -123,12 +188,14 @@ export function App() {
             <img src={workLabMark} alt="" width={22} height={22} /> WorkLab
           </a>
           <nav className="main-nav" aria-label="Навигация">
-            <button type="button" aria-current="page" disabled>Главная</button>
-            <a className="nav-play" href="#game">Играть</a>
+            {choosingDifficulty
+              ? <a href="./">Главная</a>
+              : <button type="button" aria-current="page" disabled>Главная</button>}
+            <a className="nav-play" href="#game" aria-current={choosingDifficulty ? "page" : undefined}>Играть</a>
           </nav>
         </div>
       </header>
-      <main className="shell home" id="main" tabIndex={-1}>
+      {choosingDifficulty ? <DifficultySelection /> : <main className="shell home" id="main" tabIndex={-1}>
         <section className="hero">
           <div className="hero-copy">
             <div className="sponsor-badge">
@@ -151,7 +218,7 @@ export function App() {
           </div>
           <CodePreview />
         </section>
-      </main>
+      </main>}
       <footer className="site-footer">
         <div className="shell footer-inner">
           <span className="footer-brand">WorkLab <span aria-hidden="true">•</span> пахан team</span>

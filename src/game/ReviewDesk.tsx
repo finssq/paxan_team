@@ -1,4 +1,4 @@
-import { Check, CircleAlert, CircleCheck, Clock3, Code2, FlaskConical, Lightbulb, LockKeyhole, MessageSquare, Minus, RotateCcw, ShieldCheck, Square, Stamp, Trophy, Volume2, VolumeX, WalletCards, Wifi, X } from "lucide-react"
+import { Check, CircleAlert, CircleCheck, Clock3, Code2, FlaskConical, Lightbulb, LockKeyhole, MessageSquare, Minus, RotateCcw, ShieldCheck, Square, Stamp, Trophy, WalletCards, X } from "lucide-react"
 import { animate, AnimatePresence, motion, MotionConfig, useReducedMotion } from "motion/react"
 import { useEffect, useReducer, useRef, useState } from "react"
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react"
@@ -7,7 +7,7 @@ import type { Chapter, CheckResult, Ticket } from "../types/game"
 import { CodeSource } from "../ui"
 import { initialReview, restoreReview, review, serializeReview } from "./review"
 import type { ReviewAction, ReviewState } from "./review"
-import { achievements, characters, mentorGreeting, reactions, readFeedback, recordFeedback, shiftDeadline } from "./feedback"
+import { achievements, characters, mentorGreeting, reactions, readFeedback, recordFeedback } from "./feedback"
 import type { FeedbackEvent, Message } from "./feedback"
 import { DockIcon, Metric, Portrait, Quest } from "./FeedbackUI"
 import "./review.css"
@@ -24,10 +24,17 @@ type Notice = { id: number; title: string; detail: string; tone: "info" | "warn"
 
 const saveKey = "worklab.review.v1"
 const feedbackKey = "worklab.feedback.v1"
+const developerNoticeTitle = `${characters.developer.name} · WorkChat`
 const spring = { type: "spring", stiffness: 360, damping: 31 } as const
+const clockFormat = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+const compactLayout = "(width < 841px), (height < 501px) and (width < 1025px)"
 const resizeEdges = ["n", "ne", "e", "se", "s", "sw", "w", "nw"] as const
 type WindowEdge = typeof resizeEdges[number]
 type WindowFrame = { x: number; y: number; width: number; height: number }
+
+function getWindowScroller(body: HTMLElement) {
+  return window.matchMedia(compactLayout).matches ? body.parentElement ?? body : body
+}
 
 function clamp(value: number, low: number, high: number) {
   return Math.max(low, Math.min(value, high))
@@ -75,7 +82,18 @@ function CheckTile({ label, result }: { label: string; result: CheckResult | und
   )
 }
 
-function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximize, shake = 0, children }: {
+function DeskClock() {
+  const [time, setTime] = useState(() => clockFormat.format(new Date()))
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setTime(clockFormat.format(new Date())), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+
+  return <time className="os-clock" dateTime={time}>{time}</time>
+}
+
+function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximize, restore, shake = 0, children }: {
   app: typeof apps[number]
   layer: number
   active: boolean
@@ -84,6 +102,7 @@ function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximiz
   focus: () => void
   hide: () => void
   maximize: () => void
+  restore: () => void
   shake?: number
   children: ReactNode
 }) {
@@ -104,7 +123,7 @@ function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximiz
     const desktop = panel.current?.parentElement
     if (!desktop) return
     const observer = new ResizeObserver(() => {
-      if (!window.matchMedia("(min-width: 721px)").matches) return
+      if (window.matchMedia(compactLayout).matches) return
       const { clientWidth: width, clientHeight: height } = desktop
       setFrame(current => current && fitFrame(current, width, height))
     })
@@ -115,7 +134,7 @@ function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximiz
   function geometry() {
     const element = panel.current
     const desktop = element?.parentElement
-    if (!element || !desktop || !window.matchMedia("(min-width: 721px)").matches || maximized) return
+    if (!element || !desktop || window.matchMedia(compactLayout).matches) return
     const { clientWidth: width, clientHeight: height } = desktop
     return { width, height, origin: {
       x: element.offsetLeft, y: element.offsetTop, width: element.offsetWidth, height: element.offsetHeight,
@@ -127,13 +146,18 @@ function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximiz
     if (!bounds) return
     const { width, height } = bounds
     const fitted = fitFrame(origin, width, height)
-    setFrame(mode === "move"
+    const next = mode === "move"
       ? fitFrame({ ...fitted, x: origin.x + dx, y: origin.y + dy }, width, height)
-      : resizeFrame(fitted, mode, dx, dy, width, height))
+      : resizeFrame(fitted, mode, dx, dy, width, height)
+    if (maximized) {
+      if (next.width >= fitted.width && next.height >= fitted.height) return
+      restore()
+    }
+    setFrame(next)
   }
 
   function startGesture(event: ReactPointerEvent<HTMLElement>, mode: "move" | WindowEdge) {
-    if (event.button !== 0 || dragRef.current) return
+    if (event.button !== 0 || dragRef.current || (maximized && mode === "move")) return
     const bounds = geometry()
     if (!bounds) return
     event.preventDefault()
@@ -176,31 +200,31 @@ function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximiz
           if (!(event.target instanceof Element && event.target.closest("button"))) startGesture(event, "move")
         }}
       >
-        <div className="os-lights">
-          <button type="button" className="os-light os-light-close" aria-label={`Закрыть ${app.name}`} title="Закрыть окно" onClick={hide}><X size={12} aria-hidden="true" /></button>
-          <button type="button" className="os-light os-light-minimize" aria-label={`Свернуть ${app.name}`} title="Свернуть окно" onClick={hide}><Minus size={12} aria-hidden="true" /></button>
-          <button type="button" className="os-light os-light-expand" aria-label={maximized ? `Восстановить размер ${app.name}` : `Развернуть ${app.name}`} title={maximized ? "Восстановить размер" : "Развернуть окно"} onClick={maximize}><Square size={10} aria-hidden="true" /></button>
-        </div>
         <h2
           id={`workos-title-${app.id}`}
-          tabIndex={maximized ? undefined : 0}
-          title={maximized ? undefined : "Alt и стрелки — перемещение, Alt + Shift и стрелки — размер"}
+          tabIndex={0}
+          title={maximized ? "Alt + Shift и стрелки — размер" : "Alt и стрелки — перемещение, Alt + Shift и стрелки — размер"}
           onKeyDown={event => {
-            if (maximized || !event.altKey || !window.matchMedia("(min-width: 721px)").matches) return
+            if (!event.altKey || (maximized && !event.shiftKey)) return
             const movement: Record<string, [number, number]> = {
               ArrowLeft: [-32, 0], ArrowRight: [32, 0], ArrowUp: [0, -32], ArrowDown: [0, 32],
             }
             const delta = movement[event.key]
             if (!delta) return
-            event.preventDefault()
             const bounds = geometry()
-            if (bounds) updateFrame(bounds.origin, event.shiftKey ? "se" : "move", delta[0], delta[1])
+            if (!bounds) return
+            event.preventDefault()
+            updateFrame(bounds.origin, event.shiftKey ? "se" : "move", delta[0], delta[1])
           }}
         ><Icon size={21} strokeWidth={2.3} aria-hidden="true" /> {app.name}</h2>
-        <div aria-hidden="true" className="os-window-bar-spacer" />
+        <div className="os-lights">
+          <button type="button" className="os-light os-light-minimize" aria-label={`Свернуть ${app.name}`} title="Свернуть окно" onClick={hide}><Minus size={12} aria-hidden="true" /></button>
+          <button type="button" className="os-light os-light-expand" aria-label={maximized ? `Восстановить размер ${app.name}` : `Развернуть ${app.name}`} title={maximized ? "Восстановить размер" : "Развернуть окно"} onClick={maximize}><Square size={10} aria-hidden="true" /></button>
+          <button type="button" className="os-light os-light-close" aria-label={`Закрыть ${app.name}`} title="Закрыть окно" onClick={hide}><X size={12} aria-hidden="true" /></button>
+        </div>
       </header>
       {children}
-      {!maximized && resizeEdges.map(edge => (
+      {resizeEdges.map(edge => (
         <span key={edge} className="os-resize-handle" data-edge={edge} aria-hidden="true" onPointerDown={event => startGesture(event, edge)} />
       ))}
     </motion.section>
@@ -238,7 +262,7 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
   ])
   const [incoming, setIncoming] = useState<Message[]>([])
   const [shake, setShake] = useState(0)
-  const [notices, setNotices] = useState<Notice[]>([{ id: 0, title: "Сообщение в WorkChat", detail: ticket.developer, tone: "info" }])
+  const [notices, setNotices] = useState<Notice[]>([{ id: 0, title: developerNoticeTitle, detail: ticket.developer, tone: "info" }])
   const notice = notices[0]
   const typing = incoming[0]
   const mentorAsked = feedback.run.hint
@@ -248,12 +272,12 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
   const activeRef = useRef(active)
   const desk = useRef<HTMLElement>(null)
   const editorBody = useRef<HTMLDivElement>(null)
+  const browserBody = useRef<HTMLDivElement>(null)
   const patchList = useRef<HTMLFieldSetElement>(null)
   const chatBody = useRef<HTMLDivElement>(null)
   const dock = useRef<HTMLElement>(null)
   const popover = useRef<HTMLElement>(null)
   const released = state.step === "released"
-  const ticketNumber = chapter.tickets.findIndex(item => item.id === ticket.id) + 1
   const ticketCount = chapter.tickets.length + chapter.upcoming.length
   const completed = new Set([...feedback.completed, ...(released ? [ticket.id] : [])])
   const patch = ticket.patches.find(option => option.id === state.patchId)
@@ -263,7 +287,6 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
   const explanation = lines.find(line => line.id === activeLine)?.hint
   const evidenceWrong = state.step === "locate" && Boolean(state.evidenceId)
   const showPatches = state.step === "patch" || state.step === "retest" || state.step === "stamp"
-  const activeApp = hidden.includes(active) ? undefined : apps.find(app => app.id === active)
 
   useEffect(() => {
     desk.current?.focus({ preventScroll: true })
@@ -306,14 +329,19 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
   }, [typing, audio])
 
   useEffect(() => {
-    if (active === "chat" && chatBody.current) chatBody.current.scrollTop = chatBody.current.scrollHeight
+    if (active !== "chat" || !chatBody.current) return
+    const scroller = getWindowScroller(chatBody.current)
+    scroller.scrollTop = scroller.scrollHeight
   }, [messages, typing, active])
 
   useEffect(() => {
-    if (active === "code" && state.step === "patch" && patchList.current && editorBody.current) {
-      editorBody.current.scrollTop = patchList.current.offsetTop
-    }
+    if (active === "code" && state.step === "patch") scrollToPatches()
   }, [active, state.step])
+
+  useEffect(() => {
+    const scroller = browserBody.current?.parentElement
+    if (scroller && window.matchMedia(compactLayout).matches) scroller.scrollTop = 0
+  }, [browserTab, released, state.checks])
 
   useEffect(() => {
     if (!dockPanel) return
@@ -347,13 +375,6 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
     }
   }
 
-  function toggleSound() {
-    const next = { ...feedbackRef.current, sound: !feedbackRef.current.sound }
-    if (next.sound) audio.unlock()
-    feedbackRef.current = next
-    setFeedback(next)
-  }
-
   function focusApp(id: DeskApp) {
     if (activeRef.current !== id && sound) audio.play("click")
     activeRef.current = id
@@ -380,11 +401,18 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
     dock.current?.querySelector<HTMLButtonElement>(`[data-app="${id}"]`)?.focus()
   }
 
+  function scrollToPatches() {
+    const list = patchList.current
+    const body = editorBody.current
+    if (!list || !body) return
+    const scroller = getWindowScroller(body)
+    const topInset = Number.parseFloat(getComputedStyle(scroller).scrollPaddingTop) || 0
+    scroller.scrollTop += list.getBoundingClientRect().top - scroller.getBoundingClientRect().top - topInset
+  }
+
   function openCode() {
     openApp("code")
-    window.requestAnimationFrame(() => {
-      if (patchList.current && editorBody.current) editorBody.current.scrollTop = patchList.current.offsetTop
-    })
+    window.requestAnimationFrame(scrollToPatches)
   }
 
   function closeDockPanel() {
@@ -430,7 +458,7 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
     setBrowserTab("preview")
     setPaymentTried(false)
     openApp("browser")
-    notify("Сообщение в WorkChat", ticket.developer)
+    notify(developerNoticeTitle, ticket.developer)
   }
 
   function askMentor() {
@@ -453,6 +481,7 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
       maximized: maximized === app.id,
       focus: () => focusApp(app.id),
       hide: () => hideApp(app.id),
+      restore: () => setMaximized(current => current === app.id ? null : current),
       maximize: () => {
         focusApp(app.id)
         setMaximized(current => current === app.id ? null : app.id)
@@ -485,32 +514,17 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
         onKeyDown={event => { if (event.key === "Escape") { closeDockPanel(); setNotices(queue => queue.slice(1)) } }}>
         <a className="skip-link" href="#desk">К рабочему столу</a>
         <header className="os-menu">
-          <div className="os-menu-context">
-            <a className="os-home" href="./" aria-label="WorkLab — главная" title="На главную">
-              <svg width={18} height={18} viewBox="0 0 24 24" aria-hidden="true">
-                <path fill="currentColor" d="M5 1h12l6 6v12a4 4 0 0 1-4 4H7l-6-6V5a4 4 0 0 1 4-4Z" />
-                <path d="m6 8 4 4-4 4m7 0h5" fill="none" stroke="var(--os-dark)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-              </svg><span>WorkLab</span>
-            </a>
-            <span className="os-current-app">{activeApp?.name ?? "Рабочий стол"}</span>
-            <h1 className="os-ticket" title={ticket.title}>
-              <span className="os-shift-dots" role="img" aria-label={`Задача ${ticketNumber} из ${ticketCount}, завершено ${completed.size}`}>
-                {Array.from({ length: ticketCount }, (_, index) => {
-                  const id = chapter.tickets[index]?.id
-                  const done = Boolean(id && completed.has(id))
-                  return <span key={index} aria-hidden="true" data-state={done ? "done" : index + 1 === ticketNumber ? "current" : "future"}>{done && <Check size={9} />}</span>
-                })}
-              </span>
-              <span className="os-ticket-title">{ticket.title}</span>
-            </h1>
-          </div>
+          <a className="os-home" href="./" aria-label="WorkLab — главная" title="На главную">
+            <svg width={18} height={18} viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M5 1h12l6 6v12a4 4 0 0 1-4 4H7l-6-6V5a4 4 0 0 1 4-4Z" />
+              <path d="m6 8 4 4-4 4m7 0h5" fill="none" stroke="var(--os-dark)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg><span>WorkLab</span>
+          </a>
           <Quest step={state.step} />
           <div className="os-indicators">
             <Metric label="Безопасность" kind="security" value={feedback.run.security} change={metricChange.security} sequence={metricChange.sequence} />
             <Metric label="Стабильность" kind="stability" value={feedback.run.stability} change={metricChange.stability} sequence={metricChange.sequence} />
-            <button type="button" className="os-sound" aria-label="Звук" aria-pressed={sound} title={sound ? "Выключить звук" : "Включить звук"} onClick={toggleSound}>{sound ? <Volume2 size={15} aria-hidden="true" /> : <VolumeX size={15} aria-hidden="true" />}</button>
-            <span className="os-network" title="Локальная симуляция" aria-label="Локальная симуляция"><Wifi size={15} aria-hidden="true" /></span>
-            <div className="os-deadline"><time className="os-clock" dateTime={ticket.time}>{ticket.time}</time> · до {shiftDeadline}</div>
+            <DeskClock />
           </div>
         </header>
         <div className="os-notifications" aria-live="polite">
@@ -523,6 +537,7 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
           </AnimatePresence>
         </div>
         <main className="os-desktop" id="desk" ref={desk} tabIndex={-1} data-maximized={maximized !== null}>
+          <span className="os-desktop-wordmark" aria-hidden="true">WorkLab</span>
           <AppWindow {...windowProps(apps[0])}>
             <div className="os-filebar">
               <code><Code2 size={14} aria-hidden="true" /> {ticket.file}</code>
@@ -606,7 +621,7 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
               </div>
               <span>Тестовые данные</span>
             </div>}
-            <div className="os-window-scroll os-browser-scroll" key={released ? "release" : browserTab}>
+            <div className="os-window-scroll os-browser-scroll" key={released ? "release" : browserTab} ref={browserBody}>
               {released ? (
                 <div className="os-release">
                   <motion.div className="os-release-stamp" initial={reducedMotion ? false : { opacity: .5, scale: 1.1, rotate: -7 }} animate={{ opacity: 1, scale: 1, rotate: 0 }} transition={spring}><Stamp size={18} aria-hidden="true" /> В ПРОДАКШН</motion.div>
@@ -641,13 +656,20 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
               {messages.map((message, index) => (
                 <article className="os-message" key={index}>
                   <Portrait message={message} />
-                  <div><div className="os-message-meta"><strong>{characters[message.author].name}</strong><time dateTime={ticket.time}>{ticket.time}</time></div><p>{message.text}</p></div>
+                  <div>
+                    <div className="os-message-meta">
+                      <strong>{characters[message.author].name}</strong>
+                      <span className="os-message-role">{characters[message.author].role}</span>
+                      <time dateTime={ticket.time}>{ticket.time}</time>
+                    </div>
+                    <p>{message.text}</p>
+                  </div>
                 </article>
               ))}
               {typing && <p className="os-typing"><span aria-hidden="true">•••</span> {characters[typing.author].name} печатает…</p>}
             </div>
             <footer className="os-window-footer os-chat-footer">
-              <motion.button type="button" className="os-secondary" whileHover={mentorAsked ? undefined : { y: -1 }} transition={spring} disabled={mentorAsked} onClick={askMentor}><Lightbulb size={16} aria-hidden="true" /> {mentorAsked ? "Подсказка в чате" : "Спросить наставника"}</motion.button>
+              <motion.button type="button" className="os-secondary" whileHover={mentorAsked ? undefined : { y: -1 }} transition={spring} disabled={mentorAsked} onClick={askMentor}><Lightbulb size={16} aria-hidden="true" /> {mentorAsked ? "Подсказка в чате" : "Спросить Макса"}</motion.button>
             </footer>
           </AppWindow>
         </main>
@@ -674,15 +696,14 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
               const isOpen = !hidden.includes(app.id)
               return (
                 <motion.button key={app.id} type="button" className="os-dock-item" data-app={app.id} data-open={isOpen} aria-label={app.label} aria-controls={`workos-${app.id}`} aria-pressed={isOpen && active === app.id} onClick={() => openApp(app.id)} whileTap={{ scale: .95 }} transition={spring}>
-                  <DockIcon app={app.id} /><span className="os-dock-label">{app.label}</span>
-                  <span className="os-dock-tooltip" aria-hidden="true">{app.name}</span>
+                  <DockIcon app={app.id} />
                   {app.id === "chat" && unread && <span className="os-unread" aria-label="Одно непрочитанное сообщение">1</span>}
                 </motion.button>
               )
             })}
             <span className="os-dock-divider" aria-hidden="true" />
-            <motion.button type="button" className="os-dock-item" data-app="vault" aria-label="Сейф секретов" aria-expanded={dockPanel === "vault"} onClick={() => toggleDockPanel("vault")} whileTap={{ scale: .95 }} transition={spring}><DockIcon app="vault" /><span className="os-dock-label">Сейф</span><span className="os-dock-tooltip" aria-hidden="true">.env Сейф</span></motion.button>
-            <motion.button type="button" className="os-dock-item" data-app="tickets" aria-label="Задачи" aria-expanded={dockPanel === "tickets"} onClick={() => toggleDockPanel("tickets")} whileTap={{ scale: .95 }} transition={spring}><DockIcon app="tickets" /><span className="os-dock-label">Задачи</span><span className="os-dock-tooltip" aria-hidden="true">Задачи смены</span></motion.button>
+            <motion.button type="button" className="os-dock-item" data-app="vault" aria-label="Сейф секретов" aria-expanded={dockPanel === "vault"} onClick={() => toggleDockPanel("vault")} whileTap={{ scale: .95 }} transition={spring}><DockIcon app="vault" /></motion.button>
+            <motion.button type="button" className="os-dock-item" data-app="tickets" aria-label="Задачи" aria-expanded={dockPanel === "tickets"} onClick={() => toggleDockPanel("tickets")} whileTap={{ scale: .95 }} transition={spring}><DockIcon app="tickets" /></motion.button>
           </nav>
         </div>
 

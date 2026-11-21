@@ -9,7 +9,7 @@ import { initialReview, restoreReview, review, serializeReview } from "./review"
 import type { ReviewAction, ReviewState } from "./review"
 import { achievements, characters, mentorGreeting, reactions, readFeedback, recordFeedback } from "./feedback"
 import type { FeedbackEvent, Message } from "./feedback"
-import { DockIcon, Metric, Portrait, Quest } from "./FeedbackUI"
+import { DockIcon, Portrait, Quest } from "./FeedbackUI"
 import "./review.css"
 
 const apps = [
@@ -21,6 +21,7 @@ const apps = [
 type DeskApp = typeof apps[number]["id"]
 type DockPanel = "vault" | "tickets"
 type Notice = { id: number; title: string; detail: string; tone: "info" | "warn" | "success" | "achievement" }
+type ChatMessage = Message & { sentAt: Date }
 
 const saveKey = "worklab.review.v1"
 const feedbackKey = "worklab.feedback.v1"
@@ -34,6 +35,13 @@ type WindowFrame = { x: number; y: number; width: number; height: number }
 
 function getWindowScroller(body: HTMLElement) {
   return window.matchMedia(compactLayout).matches ? body.parentElement ?? body : body
+}
+
+function openingMessages(ticket: Ticket, includeHint = false): ChatMessage[] {
+  const sentAt = new Date()
+  const messages: Message[] = [{ author: "developer", mood: "smile", text: ticket.developer }, mentorGreeting]
+  if (includeHint) messages.push({ author: "mentor", mood: "guiding", text: ticket.hint })
+  return messages.map(message => ({ ...message, sentAt }))
 }
 
 function clamp(value: number, low: number, high: number) {
@@ -254,12 +262,7 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
     }
   })
   const feedbackRef = useRef(feedback)
-  const [metricChange, setMetricChange] = useState({ security: 0, stability: 0, sequence: 0 })
-  const [messages, setMessages] = useState<Message[]>(() => [
-    { author: "developer", mood: "smile", text: ticket.developer },
-    mentorGreeting,
-    ...(feedback.run.hint ? [{ author: "mentor", mood: "guiding", text: ticket.hint } as const] : []),
-  ])
+  const [messages, setMessages] = useState(() => openingMessages(ticket, feedback.run.hint))
   const [incoming, setIncoming] = useState<Message[]>([])
   const [shake, setShake] = useState(0)
   const [notices, setNotices] = useState<Notice[]>([{ id: 0, title: developerNoticeTitle, detail: ticket.developer, tone: "info" }])
@@ -320,7 +323,8 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
   useEffect(() => {
     if (!typing) return
     const timeout = window.setTimeout(() => {
-      setMessages(history => [...history, typing])
+      const message = { ...typing, sentAt: new Date() }
+      setMessages(history => [...history, message])
       setIncoming(queue => queue.slice(1))
       if (activeRef.current !== "chat") setUnread(true)
       if (feedbackRef.current.sound) audio.play("message")
@@ -365,10 +369,6 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
     const next = recordFeedback(previous, event, ticket.id, ticketCount, Boolean(state.patchId))
     feedbackRef.current = next
     setFeedback(next)
-    const security = next.run.security - previous.run.security
-    const stability = next.run.stability - previous.run.stability
-    if (event === "restart") setMetricChange({ security: 0, stability: 0, sequence: 0 })
-    else if (security || stability) setMetricChange(change => ({ security, stability, sequence: change.sequence + 1 }))
     if (event !== "hint" && event !== "restart") setIncoming(queue => [...queue, reactions[event]])
     for (const id of next.earned) {
       if (!previous.earned.includes(id)) notify(achievements[id].title, achievements[id].detail, "achievement")
@@ -451,7 +451,7 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
     setSelectedLine(null)
     setHoveredLine(null)
     applyFeedback("restart")
-    setMessages([{ author: "developer", mood: "smile", text: ticket.developer }, mentorGreeting])
+    setMessages(openingMessages(ticket))
     setIncoming([])
     setNotices([])
     setUnread(true)
@@ -521,11 +521,7 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
             </svg><span>WorkLab</span>
           </a>
           <Quest step={state.step} />
-          <div className="os-indicators">
-            <Metric label="Безопасность" kind="security" value={feedback.run.security} change={metricChange.security} sequence={metricChange.sequence} />
-            <Metric label="Стабильность" kind="stability" value={feedback.run.stability} change={metricChange.stability} sequence={metricChange.sequence} />
-            <DeskClock />
-          </div>
+          <DeskClock />
         </header>
         <div className="os-notifications" aria-live="polite">
           <AnimatePresence mode="wait">
@@ -660,7 +656,7 @@ export default function ReviewDesk({ chapter, ticket }: { chapter: Chapter; tick
                     <div className="os-message-meta">
                       <strong>{characters[message.author].name}</strong>
                       <span className="os-message-role">{characters[message.author].role}</span>
-                      <time dateTime={ticket.time}>{ticket.time}</time>
+                      <time dateTime={message.sentAt.toISOString()}>{clockFormat.format(message.sentAt)}</time>
                     </div>
                     <p>{message.text}</p>
                   </div>

@@ -1,37 +1,9 @@
-import { Check, ShieldCheck, Zap } from "lucide-react"
-import { AnimatePresence, motion, useReducedMotion } from "motion/react"
+import { Check } from "lucide-react"
+import { motion, useReducedMotion } from "motion/react"
 import { useEffect, useRef } from "react"
 import { questSteps } from "./feedback"
 import type { Message } from "./feedback"
 import type { ReviewStep } from "./review"
-
-export function Metric({ label, value, change, sequence, kind }: {
-  label: string; value: number; change: number; sequence: number; kind: "security" | "stability"
-}) {
-  const Icon = kind === "security" ? ShieldCheck : Zap
-  const reduced = useReducedMotion()
-  return (
-    <div className="os-hp" data-tone={value >= 75 ? "healthy" : value >= 50 ? "warn" : "danger"}>
-      <Icon size={14} aria-hidden="true" />
-      <div className="os-hp-rail" role="progressbar" aria-label={label} aria-valuenow={value} aria-valuemin={0} aria-valuemax={100}>
-        <motion.span initial={false} animate={{ width: `${value}%` }} transition={{ duration: reduced ? 0 : .34 }} />
-        {sequence > 0 && Boolean(change) && <motion.i key={sequence} initial={{ opacity: .7 }} animate={{ opacity: 0 }} transition={{ duration: .4 }} />}
-      </div>
-      <span className="os-hp-value">{value}%</span>
-      <AnimatePresence>
-        {sequence > 0 && Boolean(change) && <motion.span
-          key={sequence}
-          className="os-hp-delta"
-          aria-hidden="true"
-          data-loss={change < 0}
-          initial={{ opacity: 1, y: 0 }}
-          animate={{ opacity: 0, y: reduced ? 0 : 9 }}
-          transition={{ duration: 1.3 }}
-        >{change > 0 ? "+" : "−"}{Math.abs(change)}</motion.span>}
-      </AnimatePresence>
-    </div>
-  )
-}
 
 export function Quest({ step }: { step: ReviewStep }) {
   const next = questSteps.find(item => !item.completed.includes(step))

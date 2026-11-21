@@ -1,44 +1,24 @@
-import { ArrowRight, CircleAlert, CircleCheck, Code2, Flame, Play, RotateCcw, Smartphone, Sprout, UserRound, Zap } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
-import type { FormEvent } from "react"
+import { ArrowRight, CircleAlert, CircleCheck, Code2, Gamepad2, Map, Mouse, Play, RotateCcw, ShieldCheck, Smartphone, Timer, UserRound } from "lucide-react"
+import { useEffect, useState } from "react"
 import { createSfx } from "./audio/sfx"
 import sponsorLogo from "./centr-invest.svg"
-import { chapter, paymentPreview, paymentTicket } from "./data/paymentPreview"
+import { chapter, paymentPreview } from "./data/paymentPreview"
 import { fridayChapter, incidentTicket, practiceTicket } from "./data/friday"
 import { trainingTicket } from "./data/training"
 import workLabMark from "./favicon.svg"
 import { clearShift, initialReview, readShift, saveShift } from "./game/review"
-import { readFeedback } from "./game/feedback"
-import type { Difficulty } from "./types/game"
+import { readFeedback, readSoundPreference, saveSoundPreference } from "./game/feedback"
 import { Card, CodeSource } from "./ui"
 
-const nicknameKey = "worklab.nickname.v1"
-const nicknameLimit = 32
-const difficultyKey = "worklab.difficulty.v1"
 const bootDuration = 1400
-const difficultyOptions = {
-  intern: { label: "Простой", icon: Sprout },
-  medium: { label: "Средний", icon: Zap },
-  hard: { label: "Сложный", icon: Flame },
-} satisfies Record<Difficulty, { label: string; icon: typeof Sprout }>
 
-function parseDifficulty(value: string | null): Difficulty {
-  return value === "medium" || value === "hard" ? value : "intern"
-}
-
-function loadDifficulty(): Difficulty {
-  try {
-    return parseDifficulty(localStorage.getItem(difficultyKey))
-  } catch {}
-  return "intern"
-}
-
-function readCurrentShift(difficulty: Difficulty) {
-  const saved = difficulty === "medium"
-    ? readShift(fridayChapter, practiceTicket, ["friday-profile", "friday-transfer", "friday-traffic"]) ?? readShift(fridayChapter, trainingTicket)
-    : readShift(chapter, practiceTicket) ?? readShift(chapter, trainingTicket)
-  if (saved || difficulty !== "medium") return saved
-  const previous = readShift(chapter)
+function readCurrentShift() {
+  const saved = readShift(fridayChapter, practiceTicket, ["friday-profile", "friday-transfer", "friday-traffic"])
+  if (saved) return saved
+  const previous = readShift(chapter, trainingTicket)
+  if (previous?.ticket.id === trainingTicket.id) {
+    return { ticket: practiceTicket, state: initialReview, feedback: { ...readFeedback(null, [], practiceTicket.id, false), sound: previous.feedback.sound } }
+  }
   return previous && {
     ticket: incidentTicket,
     state: initialReview,
@@ -46,10 +26,9 @@ function readCurrentShift(difficulty: Difficulty) {
   }
 }
 
-function DeskStartup({ audio, difficulty }: { audio: ReturnType<typeof createSfx>; difficulty: Difficulty }) {
+function DeskStartup({ audio }: { audio: ReturnType<typeof createSfx> }) {
   const [Desk, setDesk] = useState<typeof import("./game/ReviewDesk").default | "failed" | null>(null)
-  const [saved, setSaved] = useState(() => readCurrentShift(difficulty))
-  const activeChapter = difficulty === "medium" ? fridayChapter : chapter
+  const [saved, setSaved] = useState(readCurrentShift)
 
   useEffect(() => {
     const startedAt = performance.now()
@@ -71,10 +50,9 @@ function DeskStartup({ audio, difficulty }: { audio: ReturnType<typeof createSfx
   }, [])
 
   if (Desk && Desk !== "failed") {
-    const ticket = saved?.ticket.id === trainingTicket.id || !saved ? practiceTicket : saved.ticket
-    const training = ticket.id === trainingTicket.id
-    return <Desk key={ticket.id} chapter={activeChapter} ticket={ticket} saved={saved?.ticket.id === ticket.id ? saved : null} audio={audio} training={training} difficultyLabel={difficultyOptions[difficulty].label} onStartShift={feedback => {
-      const firstTask = difficulty === "medium" ? incidentTicket : paymentTicket
+    const ticket = saved?.ticket ?? practiceTicket
+    return <Desk key={ticket.id} chapter={fridayChapter} ticket={ticket} saved={saved} audio={audio} training={false} onStartShift={feedback => {
+      const firstTask = incidentTicket
       const next = { ...feedback, wave: undefined, completed: [], streak: 0, run: readFeedback(null, [], firstTask.id, false).run }
       saveShift(firstTask, initialReview, next)
       setSaved({ ticket: firstTask, state: initialReview, feedback: next })
@@ -94,14 +72,6 @@ function DeskStartup({ audio, difficulty }: { audio: ReturnType<typeof createSfx
       )}
     </main>
   )
-}
-
-function loadNickname() {
-  try {
-    return window.localStorage.getItem(nicknameKey)?.trim().slice(0, nicknameLimit) ?? ""
-  } catch {
-    return ""
-  }
 }
 
 function CodePreview() {
@@ -187,45 +157,62 @@ function CodePreview() {
   )
 }
 
-function DifficultySelection({ onStart }: { onStart: (difficulty: Difficulty) => void }) {
-  const heading = useRef<HTMLHeadingElement>(null)
-  const [nickname, setNickname] = useState(loadNickname)
-
-  useEffect(() => {
-    heading.current?.focus({ preventScroll: true })
-  }, [])
-
-  function startGame(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const submitter = (event.nativeEvent as SubmitEvent).submitter
-    const difficulty = parseDifficulty(submitter instanceof HTMLButtonElement ? submitter.value : null)
-    const playerName = nickname.trim()
-    try {
-      if (playerName) window.localStorage.setItem(nicknameKey, playerName)
-      else window.localStorage.removeItem(nicknameKey)
-    } catch {}
-    onStart(difficulty)
-  }
-
+function GameSelection({ onStart }: { onStart: () => void }) {
   return (
-    <main className="shell difficulty" id="main" tabIndex={-1}>
-      <h1 tabIndex={-1} ref={heading}>Выбери сложность</h1>
-      <form className="difficulty-form" onSubmit={startGame}>
-        <label className="difficulty-nickname">
-          <span>Никнейм <small>необязательно</small></span>
-          <input name="nickname" placeholder="Введи свой никнейм" autoComplete="nickname" maxLength={nicknameLimit} value={nickname}
-            onChange={event => setNickname(event.target.value)} />
-        </label>
-        <div className="difficulty-options">
-          {Object.entries(difficultyOptions).map(([level, { label, icon: Icon }]) => (
-            <button key={level} className="difficulty-option surface" type="submit" value={level}>
-              <span className="difficulty-icon"><Icon size={23} aria-hidden="true" /></span>
-              <span className="difficulty-label">{label}</span>
-              <ArrowRight size={20} aria-hidden="true" />
-            </button>
-          ))}
-        </div>
-      </form>
+    <main className="shell game-selection" id="main" tabIndex={-1}>
+      <header>
+        <h1>Выбери игру</h1>
+        <p>Две стороны кибербезопасности: защита кода за рабочим столом и полевой аудит офиса.</p>
+      </header>
+      <div className="game-options">
+        <article className="game-option" aria-labelledby="blue-game-title">
+          <div className="game-preview">
+            <span className="game-team">01 · Blue Team</span>
+            <div className="game-editor" aria-hidden="true">
+              <div className="game-editor-bar"><i /><i /><i /><span>WorkCode</span></div>
+              <code>const order = getOrder();</code>
+              <code>if (!order) return;</code>
+              <code data-warning>sendReport(order);</code>
+              <code>return confirm(order);</code>
+            </div>
+            <div className="game-traffic" aria-hidden="true"><span>Перехват трафика</span><i /></div>
+          </div>
+          <div className="game-option-body">
+            <h2 id="blue-game-title">{fridayChapter.title}</h2>
+            <p>Перехватывай трафик, находи утечки в коде Дениса и спаси релиз банка до 18:00.</p>
+            <ul className="game-tags" role="list">
+              <li><ShieldCheck size={14} aria-hidden="true" /> Аудит кода</li>
+              <li><Mouse size={14} aria-hidden="true" /> Мышь / Тач</li>
+              <li><Timer size={14} aria-hidden="true" /> 5–7 мин</li>
+            </ul>
+            <div className="game-option-footer"><button className="game-action" type="button" onClick={onStart}>Начать игру <ArrowRight size={18} aria-hidden="true" /></button></div>
+          </div>
+        </article>
+        <article className="game-option" aria-labelledby="red-game-title">
+          <div className="game-preview game-preview-office">
+            <span className="game-team">02 · Red Team</span>
+            <svg className="game-office" viewBox="0 0 360 115" aria-hidden="true">
+              <path className="game-office-walls" d="M25 12H335V105H25ZM112 12V48M112 72V105M25 66H73M137 65H224M164 12V38M224 12V74M224 96V105M283 64H335" />
+              <path className="game-office-furniture" d="M40 29h38v18H40zM43 80h24v14H43zM121 28h26v17h-26zM177 26h27v20h-27zM238 79h22v15h-22zM298 75h26v6h-26zM298 87h26v6h-26z" />
+              <path className="game-office-cone" d="M286 37l-51 60a79 79 0 0 0 77 15Z" />
+              <circle cx="286" cy="37" r="3.5" fill="#f87171" />
+              <circle className="game-office-ring" cx="198" cy="84" r="10" />
+              <circle cx="198" cy="84" r="3" fill="#ff8d8d" />
+              <circle className="game-office-agent" cx="92" cy="84" r="4" />
+            </svg>
+          </div>
+          <div className="game-option-body">
+            <h2 id="red-game-title">Аудит офиса</h2>
+            <p>Проберись через камеры и дронов охраны, найди 3 дыры в офисе и дойди до ядра серверной.</p>
+            <ul className="game-tags" role="list">
+              <li><Map size={14} aria-hidden="true" /> 2D-стелс</li>
+              <li><Gamepad2 size={14} aria-hidden="true" /> WASD / Джойстик</li>
+              <li><Code2 size={14} aria-hidden="true" /> Без кода</li>
+            </ul>
+            <div className="game-option-footer"><span className="game-status">Скоро</span></div>
+          </div>
+        </article>
+      </div>
     </main>
   )
 }
@@ -233,17 +220,25 @@ function DifficultySelection({ onStart }: { onStart: (difficulty: Difficulty) =>
 function getRoute() {
   const hash = window.location.hash
   if (hash === "#desk") return "desk"
-  if (hash === "#game") return "modules"
-  if (hash === "#worklab") return "difficulty"
+  if (hash === "#game" || hash === "#worklab") return "modules"
   return "home"
 }
 
 export function App() {
   const [route, setRoute] = useState(getRoute)
-  const [audio] = useState(createSfx)
-  const [difficulty, setDifficulty] = useState(loadDifficulty)
+  const [audio] = useState(() => createSfx(readSoundPreference(readCurrentShift()?.feedback.sound)))
 
-  useEffect(() => () => audio.close(), [audio])
+  useEffect(() => {
+    const events = ["pointerdown", "click", "keydown"] as const
+    events.forEach(event => window.addEventListener(event, audio.unlock, true))
+    return () => {
+      events.forEach(event => window.removeEventListener(event, audio.unlock, true))
+      audio.close()
+    }
+  }, [audio])
+  useEffect(() => {
+    document.title = route === "desk" ? `${fridayChapter.title} · WorkLab` : "WorkLab"
+  }, [route])
 
   useEffect(() => {
     function followRoute() {
@@ -255,20 +250,16 @@ export function App() {
     return () => window.removeEventListener("hashchange", followRoute)
   }, [])
 
-  function startDesk(level: Difficulty) {
-    audio.unlock()
+  function startDesk() {
+    saveSoundPreference(readSoundPreference(readCurrentShift()?.feedback.sound))
     clearShift()
-    setDifficulty(level)
-    try { window.localStorage.setItem(difficultyKey, level) } catch {}
     window.location.hash = "#desk"
   }
 
-  if (route === "desk") return <DeskStartup audio={audio} difficulty={difficulty} />
+  if (route === "desk") return <DeskStartup audio={audio} />
 
-  const choosingDifficulty = route === "difficulty"
   const choosingGame = route === "modules"
-  const saved = choosingDifficulty || choosingGame ? null : readCurrentShift(difficulty)
-  const activeChapter = difficulty === "medium" ? fridayChapter : chapter
+  const saved = choosingGame ? null : readCurrentShift()
 
   return (
     <div className="site">
@@ -279,22 +270,12 @@ export function App() {
             <img src={workLabMark} alt="" width={22} height={22} /> WorkLab
           </a>
           <nav className="main-nav" aria-label="Навигация">
-            <a href="#home" aria-current={!choosingDifficulty && !choosingGame ? "page" : undefined}>Главная</a>
-            <a href="#game" aria-current={choosingDifficulty || choosingGame ? "page" : undefined}>Играть</a>
+            <a href="#home" aria-current={!choosingGame ? "page" : undefined}>Главная</a>
+            <a href="#game" aria-current={choosingGame ? "page" : undefined}>Играть</a>
           </nav>
         </div>
       </header>
-      {choosingGame ? <main className="shell difficulty" id="main" tabIndex={-1}>
-        <h1>Выбери игру</h1>
-        <div className="difficulty-options">
-          <a className="difficulty-option surface" href="#worklab">
-            <span className="difficulty-icon"><Code2 size={24} aria-hidden="true" /></span>
-            <span className="game-option-copy"><strong>Вечер пятницы</strong><small>Ты стажёр по кибербезопасности. Перехватывай данные учебных платежей, расследуй утечки и защищай сервис оплаты перед запуском.</small></span>
-            <ArrowRight size={20} aria-hidden="true" />
-          </a>
-          <div className="surface game-coming-soon"><strong>Вторая игра</strong><span>Скоро</span></div>
-        </div>
-      </main> : choosingDifficulty ? <DifficultySelection onStart={startDesk} /> : <main className="shell home" id="main" tabIndex={-1}>
+      {choosingGame ? <GameSelection onStart={startDesk} /> : <main className="shell home" id="main" tabIndex={-1}>
         <section className="hero">
           <div className="hero-copy">
             <div className="sponsor-badge">
@@ -308,7 +289,7 @@ export function App() {
             <p>Браузерная игра о кибербезопасности. Проведи смену в роли инженера по безопасности приложений.</p>
             <div className="hero-actions">
               {saved ? <>
-                <a className="hero-start" href="#desk" onClick={audio.unlock}><Play size={19} aria-hidden="true" /> <span>Продолжить играть <small>{[trainingTicket.id, practiceTicket.id].includes(saved.ticket.id) ? "Задача 0 · Пробная волна" : `${difficulty === "medium" ? "Волна" : "Задача"} ${activeChapter.tickets.indexOf(saved.ticket) + 1}/${activeChapter.tickets.length + activeChapter.upcoming.length}`}</small></span></a>
+                <a className="hero-start" href="#desk" onClick={audio.unlock}><Play size={19} aria-hidden="true" /> <span>Продолжить играть <small>{fridayChapter.title}</small></span></a>
                 <a className="hero-restart" href="#game"><RotateCcw size={17} aria-hidden="true" /> Начать заново</a>
               </> : <a className="hero-start" href="#game"><Play size={19} aria-hidden="true" /> Начать играть</a>}
             </div>

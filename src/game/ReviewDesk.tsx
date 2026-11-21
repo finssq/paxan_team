@@ -1,6 +1,6 @@
-import { Check, CircleAlert, CircleCheck, Clock3, Code2, FlaskConical, KeyRound, LayoutGrid, Lightbulb, LockKeyhole, MessageSquare, Minus, RotateCcw, ScanLine, Server, ShieldCheck, Snowflake, Square, Stamp, Trophy, Volume2, VolumeX, WalletCards, X } from "lucide-react"
+import { Check, CircleAlert, CircleCheck, Clock3, Code2, FlaskConical, KeyRound, Languages, Lightbulb, LockKeyhole, MessageSquare, Minus, RotateCcw, ScanSearch, Server, ShieldCheck, Snowflake, Square, Stamp, Trophy, Volume2, VolumeX, WalletCards, X } from "lucide-react"
 import { animate, AnimatePresence, motion, MotionConfig, useReducedMotion } from "motion/react"
-import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react"
+import { useCallback, useEffect, useReducer, useRef, useState } from "react"
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react"
 import type { createSfx } from "../audio/sfx"
 import { trainingChat, trainingKey, trainingLeakExplanation } from "../data/training"
@@ -11,7 +11,7 @@ import type { Chapter, CheckResult, Ticket } from "../types/game"
 import { CodeSource } from "../ui"
 import { initialReview, review, saveShift } from "./review"
 import type { readShift, ReviewAction, ReviewState, ReviewStep } from "./review"
-import { achievements, characters, mentorGreeting, reactions, readFeedback, recordFeedback } from "./feedback"
+import { achievements, characters, mentorGreeting, reactions, readFeedback, readSoundPreference, recordFeedback, saveSoundPreference } from "./feedback"
 import type { Feedback, FeedbackEvent, Message } from "./feedback"
 import { AchievementList, DockIcon, HighlightedText, Portrait, Quest, QuickHelp, SkipTutorialButton, TrainingComplete, TrainingTeam, TutorialHint } from "./FeedbackUI"
 import type { TutorialStep } from "./FeedbackUI"
@@ -35,12 +35,12 @@ function loadCodeView(): CodeView {
 }
 
 type DeskApp = typeof apps[number]["id"]
-type DockPanel = "vault" | "tickets" | "achievements"
+type DockPanel = "vault" | "achievements"
 type Notice = { id: number; title: string; detail: string; tone: "info" | "warn" | "success" | "achievement" }
 type ChatMessage = Message & { sentAt: Date }
 type StoryChatMessage = ChatMessage | { author: "player"; text: string; sentAt: Date }
 type IncomingMessage = Message & { announce?: boolean }
-type TutorialTarget = "browser" | "code" | "code-footer" | "vault" | "dock-code" | "dock-browser" | "dock-vault"
+type TutorialTarget = "browser" | "code" | "code-footer" | "vault" | "vault-trigger" | "dock-code" | "dock-browser"
 
 const spring = { type: "spring", stiffness: 360, damping: 31 } as const
 const clockFormat = new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
@@ -109,7 +109,7 @@ function DeskClock() {
   return <time className="os-clock" dateTime={time}>{time}</time>
 }
 
-function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximize, restore, onSkip, layoutRevision, shake = 0, children }: {
+function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximize, restore, onSkip, shake = 0, children }: {
   app: typeof apps[number]
   layer: number
   active: boolean
@@ -120,14 +120,12 @@ function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximiz
   maximize: () => void
   restore: () => void
   onSkip?: () => void
-  layoutRevision: number
   shake?: number
   children: ReactNode
 }) {
   const Icon = app.icon
   const reducedMotion = useReducedMotion()
   const [frame, setFrame] = useState<WindowFrame | null>(null)
-  useLayoutEffect(() => setFrame(null), [layoutRevision])
   const [gesture, setGesture] = useState<"move" | WindowEdge | null>(null)
   const dragRef = useRef<{ pointer: number; x: number; y: number; origin: WindowFrame; mode: "move" | WindowEdge } | null>(null)
   const panel = useRef<HTMLElement>(null)
@@ -252,15 +250,13 @@ function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximiz
   )
 }
 
-export default function ReviewDesk({ chapter, ticket, saved, audio, training, difficultyLabel, onStartShift }: {
+export default function ReviewDesk({ chapter, ticket, saved, audio, training, onStartShift }: {
   chapter: Chapter; ticket: Ticket; saved: ReturnType<typeof readShift>; audio: ReturnType<typeof createSfx>
-  training: boolean; difficultyLabel: string; onStartShift: (feedback: Feedback) => void
+  training: boolean; onStartShift: (feedback: Feedback) => void
 }) {
   const practice = ticket.id === practiceTicket.id
   const fridayMission = practice || ticket.id === incidentTicket.id
-  const [layoutRevision, setLayoutRevision] = useState(0)
   const [lastPracticeTip, setLastPracticeTip] = useState(-1)
-  const [demo, setDemo] = useState<"deploy" | "lost" | null>(null)
   const reducedMotion = useReducedMotion()
   const [state, dispatch] = useReducer((current: ReviewState, action: ReviewAction) => review(ticket, current, action), saved?.state ?? initialReview)
   const [active, setActive] = useState<DeskApp>(() => {
@@ -283,7 +279,10 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
   const [hoveredLine, setHoveredLine] = useState<{ id: string; above: boolean } | null>(null)
   const [codeView, setCodeView] = useState(loadCodeView)
   const [unread, setUnread] = useState(false)
-  const [feedback, setFeedback] = useState(() => saved?.feedback ?? readFeedback(null, [], ticket.id, false))
+  const [feedback, setFeedback] = useState(() => {
+    const restored = saved?.feedback ?? readFeedback(null, [], ticket.id, false)
+    return { ...restored, sound: readSoundPreference(restored.sound) }
+  })
   const feedbackRef = useRef(feedback)
   const [messages, setMessages] = useState<ChatMessage[]>(() => {
     if (!training) return []
@@ -315,16 +314,17 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
       : !wave.remainingMs ? "timeout" : wavePaused ? "paused" : "live"
   const capturedLeak = incidentPackets.some(packet => packet.unsafe && wave.captured.includes(packet.id))
   const tipIndex = state.step === "stamp" ? 3 : state.patchId ? 2 : capturedLeak ? 1 : 0
-  const practiceTip = practice && wavePhase === "live" && tipIndex > lastPracticeTip && !demo ? practiceTips[tipIndex] : undefined
-  const waveRunning = fridayMission && wavePhase === "live" && !helpOpen && !practiceTip && !demo
+  const practiceTip = practice && wavePhase === "live" && tipIndex > lastPracticeTip ? practiceTips[tipIndex] : undefined
+  const waveRunning = fridayMission && wavePhase === "live" && !helpOpen && !practiceTip
+  const xraySweeping = fridayMission && wave.xrayMs > friday.xrayMs
+  const xrayVisible = fridayMission && !released && wave.xrayMs > 0 && !xraySweeping
   const guide = fridayMission && wavePhase === "live" ? (
     !capturedLeak ? { step: 1, target: "traffic", text: "Нажми «Провести тестовую оплату» в WorkBrowser и поймай летящий пакет." }
-      : !state.patchId ? { step: 2, target: "code", text: "Сверь подозрительный адрес с чатом Макса и выбери исправление в WorkCode." }
+      : !state.patchId ? { step: 2, target: "code", text: "Отметь подозрительную строку и выбери исправление в WorkCode. Адрес можно сверить в WorkChat." }
         : state.checks && state.step === "retest" ? { step: 3, target: "code", text: "Одна из проверок не прошла. Выбери другое исправление в WorkCode." }
           : state.step === "stamp" ? { step: 3, target: "release", text: "Обе проверки прошли. Нажми «В ПРОДАКШН», чтобы выпустить исправление." }
             : { step: 3, target: "traffic", text: "Снова проведи тестовую оплату, чтобы проверить исправление." }
   ) : undefined
-  const canMarkIncident = capturedLeak && wave.rosterSeen && waveRunning
   const ticketCount = chapter.tickets.length + chapter.upcoming.length
   const ticketIndex = chapter.tickets.indexOf(ticket)
   const waveNumber = ticketIndex + 1
@@ -379,7 +379,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
       case 2: return codeVisible ? "code" : "dock-code"
       case 3: {
         if (dockPanel === "vault") return "vault"
-        return "dock-vault"
+        return codeVisible ? "vault-trigger" : "dock-code"
       }
       case 4:
       case 5: {
@@ -402,9 +402,9 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
     return tutorialTarget === target && tutorialStep !== null && <TutorialHint step={tutorialStep} />
   }
 
-  const notify = useCallback((title: string, detail: string, tone: Notice["tone"] = "info") => {
+  const notify = useCallback((title: string, detail: string, tone: Notice["tone"] = "info", immediate = false) => {
     const item = { id: ++noticeId.current, title, detail, tone }
-    setNotices(queue => [...queue, item])
+    setNotices(queue => immediate ? [item, ...queue.filter(previous => previous.title !== title)] : [...queue, item])
   }, [])
 
   useEffect(() => {
@@ -441,13 +441,15 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
       const next = { ...current, story: { ...current.story, [ticket.id]: { ...entry, replyAt: Date.now() } } }
       feedbackRef.current = next
       setFeedback(next)
-      if (current.sound) audio.play("message")
+      if (current.sound) audio.play("chatPing")
       if (activeRef.current !== "chat") setUnread(true)
     }, Math.max(0, Math.min(storyCopy.replyDelay, storyCopy.replyDelay - (Date.now() - storyRecord.answeredAt))))
     return () => window.clearTimeout(timeout)
   }, [audio, storyVisible, storyRecord, ticket.id])
 
   useEffect(() => () => window.clearTimeout(sendTimer.current), [])
+
+  useEffect(() => { audio.setEnabled(sound) }, [audio, sound])
 
   useEffect(() => {
     if (!waveRunning) return
@@ -472,8 +474,11 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
         notify("Денис выкатил баг в прод!", "−35% безопасности", "warn")
         if (run.security) {
           setShake(value => value + 1)
-          if (current.sound) audio.play("breach")
+          if (current.sound) audio.play("errorAlarm")
         }
+      } else if (current.sound && !practice && !current.wave.freezeMs && remainingMs <= 10_000 &&
+        Math.ceil(remainingMs / 1000) < Math.ceil(current.wave.remainingMs / 1000)) {
+        audio.play("timerTick")
       }
     }, 200)
     return () => window.clearInterval(interval)
@@ -486,12 +491,12 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
   }, [fridayMission, shake, reducedMotion])
 
   useEffect(() => {
-    if (fridayMission && wavePhase === "lost" && feedbackRef.current.sound) audio.play("breach")
+    if (fridayMission && wavePhase === "lost" && feedbackRef.current.sound) audio.play("errorAlarm")
   }, [audio, fridayMission, wavePhase])
 
   useEffect(() => {
     if (!notice) return
-    if (sound && notice.tone === "achievement") audio.play("success")
+    if (sound && notice.tone === "achievement") audio.play("achievement")
     const timeout = window.setTimeout(() => setNotices(queue => queue.slice(1)), notice.tone === "achievement" ? 3500 : 2300)
     return () => window.clearTimeout(timeout)
   }, [notice, audio, sound])
@@ -507,7 +512,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
         setUnread(true)
         if (announce) notify(`${characters[message.author].name} · WorkChat`, message.text)
       }
-      if (sound) audio.play("message")
+      if (sound) audio.play("chatPing")
     }, Math.min(training ? 1500 : 1150, 500 + typing.text.length * 6))
     return () => window.clearTimeout(timeout)
   }, [typing, audio, notify, sound, training, fridayMission, wavePhase])
@@ -521,6 +526,11 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
   useEffect(() => {
     if (active === "code" && state.step === "patch") scrollToPatches()
   }, [active, state.step])
+
+  useEffect(() => {
+    if (!xrayVisible) return
+    editorBody.current?.querySelector("[data-xray]")?.scrollIntoView({ block: "nearest" })
+  }, [active, xrayVisible])
 
   useEffect(() => {
     const scroller = browserBody.current
@@ -549,6 +559,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
       if (event === "hint" || event === "feature" || event === "security") next.wave = { ...next.wave, combo: 1 }
       if (event === "release") {
         const combo = next.run.flawless && !next.run.hint ? Math.min(3, next.wave.combo + 1) : 1
+        if (next.sound && combo > next.wave.combo) audio.play("comboUp")
         next.wave = { ...next.wave, combo, score: next.wave.score + 400 + Math.floor(next.wave.remainingMs / 1000) * 5 + (combo - 1) * 200 }
       }
     }
@@ -561,7 +572,6 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
   }
 
   function focusApp(id: DeskApp) {
-    if (activeRef.current !== id && sound) audio.play("click")
     activeRef.current = id
     setActive(id)
     setStack(current => current.at(-1) === id ? current : current.filter(item => item !== id).concat(id))
@@ -614,26 +624,43 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
     try { window.localStorage.setItem(codeViewKey, view) } catch {}
   }
 
-  function openTraffic() {
-    openApp("browser")
-    window.requestAnimationFrame(() => {
-      if (browserBody.current) browserBody.current.scrollTop = 0
-    })
-  }
-
-  function markEvidence(lineId: string) {
-    if (fridayMission && !canMarkIncident) return
-    dispatch({ type: "mark", lineId })
+  function markEvidence() {
+    if (!selectedLine) {
+      notify("Сначала выбери подозрительную строку в коде", "", "info", true)
+      editorBody.current?.querySelector(".os-code")?.animate(
+        [{ boxShadow: "inset 0 0 0 2px #8ee8729c" }, { boxShadow: "inset 0 0 0 2px #8ee87200" }], 850,
+      )
+      return
+    }
+    if (fridayMission && (!waveRunning || !capturedLeak)) {
+      notify(waveRunning ? "Сначала перехвати пакет с утечкой в WorkBrowser" : "Продолжи волну, чтобы отметить улику", "", "info", true)
+      return
+    }
+    const action = { type: "mark", lineId: selectedLine } as const
+    const marked = review(ticket, state, action)
+    if (marked === state) {
+      notify("Сначала проверь оплату в WorkBrowser", "", "info", true)
+      return
+    }
+    dispatch(action)
     const current = feedbackRef.current
-    if (lineId === ticket.evidenceLineId) {
+    if (marked.step === "patch") {
       applyFeedback("evidence")
+      if (current.sound) audio.play("fixApply")
       if (!training) openCode()
-    } else if (fridayMission) {
+      return
+    }
+    if (fridayMission) {
       const next = { ...current, wave: current.wave && { ...current.wave, combo: 1 }, run: { ...current.run, flawless: false } }
       feedbackRef.current = next
       setFeedback(next)
-      if (sound) audio.play("warning")
     }
+    if (current.sound) audio.play("errorAlarm")
+    if (!reducedMotion) editorBody.current?.querySelector('.os-line[aria-pressed="true"]')?.animate(
+      [{ transform: "translateX(0)" }, { transform: "translateX(-3px)" }, { transform: "translateX(3px)" }, { transform: "translateX(0)" }],
+      200,
+    )
+    notify("Эта строка не объясняет утечку", "Выбери строку, которая объясняет, куда уходят данные.", "warn", true)
   }
 
   function closeDockPanel() {
@@ -658,7 +685,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
         next.checks?.security.ok ? next.checks.feature.detail : next.checks?.security.detail ?? "", "warn")
       applyFeedback(action === "check" ? "discovery" : next.checks?.security.ok ? "feature" : "security")
       if (!fridayMission) setShake(value => value + 1)
-      if (sound && (!fridayMission || action === "retest")) audio.play("warning")
+      if (sound) audio.play("errorAlarm")
     }
   }
 
@@ -681,8 +708,8 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
     feedbackRef.current = next
     setFeedback(next)
     if (sound) {
-      audio.play("freeze")
-      if (packet.unsafe) audio.play("breach")
+      audio.play("packetCatch")
+      if (packet.unsafe && state.step !== "explore" && (state.step !== "retest" || state.checks)) audio.play("errorAlarm")
     }
     if (first) {
       notify(achievements.matrix.title, achievements.matrix.detail, "achievement")
@@ -693,6 +720,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
 
   function sendTrainingOrder(action: "check" | "retest") {
     if (sendTimer.current !== undefined) return
+    if (sound) audio.play("packetLaunch")
     setSendingOrder(true)
     sendTimer.current = window.setTimeout(() => {
       sendTimer.current = undefined
@@ -733,7 +761,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
     if (fridayMission && !waveRunning) return
     dispatch({ type: "selectPatch", patchId })
     setPaymentTried(false)
-    if (sound) audio.play("patch")
+    if (sound) audio.play("fixApply")
   }
 
   function release() {
@@ -741,7 +769,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
     dispatch({ type: "release" })
     notify("Обновление выпущено", ticket.summary, "success")
     applyFeedback("release")
-    if (sound) audio.play("stamp")
+    if (sound) audio.play("waveWin")
   }
 
   function restart(keepShift = false) {
@@ -783,21 +811,9 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
       feedbackRef.current = next
       setFeedback(next)
       openApp("browser")
-      if (sound) audio.play("warning")
     } else {
       restart(wavePhase === "lost")
     }
-  }
-
-  function openDeployDemo() {
-    setDemo("deploy")
-    if (sound) audio.play("breach")
-  }
-
-  function alignWindows() {
-    setHidden([])
-    setMaximized(null)
-    setLayoutRevision(value => value + 1)
   }
 
   function useAbility(ability: "xray" | "freeze") {
@@ -807,12 +823,11 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
     if (ability === "xray" && (!wave.xrayCharges || wave.xrayMs || !ticket.evidenceLineId || state.evidenceId === ticket.evidenceLineId)) return
     if (ability === "freeze" && (!wave.freezeCharges || wave.freezeMs)) return
     const next = { ...current, wave: ability === "xray"
-      ? { ...wave, xrayCharges: wave.xrayCharges - 1, xrayMs: friday.xrayMs }
+      ? { ...wave, xrayCharges: wave.xrayCharges - 1, xrayMs: friday.xrayMs + friday.xraySweepMs }
       : { ...wave, freezeCharges: wave.freezeCharges - 1, freezeMs: friday.freezeMs } }
     feedbackRef.current = next
     setFeedback(next)
-    if (current.sound) audio.play(ability === "freeze" ? "freeze" : "click")
-    if (ability === "xray") window.requestAnimationFrame(() => editorBody.current?.querySelector("[data-xray]")?.scrollIntoView({ block: "nearest" }))
+    if (current.sound) audio.play(ability === "freeze" ? "freezeCast" : "xrayScan")
   }
 
   function askMentor() {
@@ -842,20 +857,20 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
 
   function toggleSound() {
     const next = { ...feedbackRef.current, sound: !feedbackRef.current.sound }
+    saveSoundPreference(next.sound)
+    audio.setEnabled(next.sound)
     feedbackRef.current = next
     setFeedback(next)
   }
 
   function toggleDockPanel(panel: DockPanel, trigger: HTMLButtonElement) {
     panelTrigger.current = trigger
-    if (sound) audio.play("click")
     setDockPanel(current => current === panel ? null : panel)
   }
 
   function windowProps(app: typeof apps[number]) {
     return {
       app,
-      layoutRevision,
       layer: stack.indexOf(app.id) + 1,
       active: active === app.id,
       hidden: hidden.includes(app.id),
@@ -894,10 +909,11 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
     <MotionConfig reducedMotion="user">
       <div className="workos" data-training={training || undefined} data-friday={fridayMission || undefined}
         data-guide-code={guide?.target === "code" || undefined}
-        data-frost={fridayMission && wave.freezeMs > 0 && wavePhase === "live" || undefined}
-        data-game-over={fridayMission && (wavePhase === "lost" || demo === "lost") || undefined}
-        onClickCapture={audio.unlock}
-        onKeyDownCapture={audio.unlock}
+        data-game-over={fridayMission && wavePhase === "lost" || undefined}
+        onClickCapture={event => {
+          if (sound && event.target instanceof Element && !event.target.closest("[data-event-sound]") &&
+            event.target.closest("button:not(:disabled), summary, a, .os-window-bar")) audio.play("uiClick")
+        }}
         onKeyDown={event => { if (event.key === "Escape") { closeDockPanel(); setNotices(queue => queue.slice(1)) } }}>
         <a className="skip-link" href="#desk">К рабочему столу</a>
         <header className="os-menu">
@@ -908,38 +924,27 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
             </svg><span>WorkLab</span>
           </a>
           {storyBadge ? <div className="os-quest os-story-stage">
-            <strong>{training || practice ? "Задача 0 · Пробная волна" : chapter.title}</strong><span data-tone={storyBadge.tone}>{storyBadge.label}</span>
+            <strong>{chapter.title}</strong><span data-tone={storyBadge.tone}>{practice ? "Пробная волна" : storyBadge.label}</span>
           </div> : <Quest step={state.step} />}
           <div className="os-menu-tools">
-            {!training && !practice && <button type="button" className="os-task-progress" aria-expanded={dockPanel === "tickets"} onClick={event => toggleDockPanel("tickets", event.currentTarget)}>
-              {fridayMission ? "Волна" : "Задачи"} {ticketIndex + 1}/{ticketCount}
+            {!training && !practice && <span className="os-task-progress">
+              Волна {waveNumber}/{ticketCount}
               <span className="os-task-dots" aria-hidden="true">
                 {chapter.tickets.map(item => <i key={item.id} data-status={completed.has(item.id) ? "done" : item.id === ticket.id ? "current" : undefined} />)}
                 {chapter.upcoming.map(title => <i key={title} />)}
               </span>
-            </button>}
-            <button type="button" className="os-icon-button os-sound" aria-label="Звук" aria-pressed={sound} onClick={toggleSound}>
+            </span>}
+            <button type="button" className="os-sound" data-event-sound aria-label="Звук" aria-pressed={sound}
+              title={sound ? "Нажми, чтобы выключить звук" : "Нажми, чтобы включить звук"} onClick={toggleSound}>
               {sound ? <Volume2 size={17} aria-hidden="true" /> : <VolumeX size={17} aria-hidden="true" />}
+              <span>{sound ? "Звук" : "Тихо"}</span>
             </button>
             <QuickHelp onToggle={fridayMission ? setHelpOpen : undefined} />
-            {!training && <button type="button" className="os-icon-button os-align" title="Выровнять окна" aria-label="Выровнять окна" onClick={alignWindows}><LayoutGrid size={17} aria-hidden="true" /></button>}
             <DeskClock />
           </div>
-          {dockPanel === "tickets" && (
-            <section className="os-popover os-menu-tickets" ref={popover} tabIndex={-1} aria-labelledby="os-tickets-title">
-              <header><h2 id="os-tickets-title">{chapter.title}</h2><button type="button" className="os-icon-button" aria-label="Закрыть панель" onClick={closeDockPanel}><X size={17} aria-hidden="true" /></button></header>
-              <p className="os-ticket-progress">{difficultyLabel} уровень · Выпущено {completed.size} из {ticketCount}</p>
-              <ol className="os-ticket-list">
-                {chapter.tickets.map(item => item.id === ticket.id
-                  ? <li key={item.id} aria-current="step"><button type="button" onClick={() => openApp("browser")}>{item.title}<span>{completed.has(item.id) ? "Выпущена" : "В работе"}</span></button></li>
-                  : <li key={item.id}><span>{item.title}</span><small>{completed.has(item.id) ? "Выпущена" : "В очереди"}</small></li>)}
-                {chapter.upcoming.map(title => <li key={title}><span>{title}</span><small>Скоро</small></li>)}
-              </ol>
-            </section>
-          )}
         </header>
-        {fridayMission && <FridayHud run={wave} phase={wavePhase} security={feedback.run.security} guide={guide} practice={practice} onDemo={openDeployDemo}
-          onPause={() => setWavePaused(true)} onOpenBrowser={openTraffic} />}
+        {fridayMission && <FridayHud run={wave} phase={wavePhase} security={feedback.run.security} guide={guide} practice={practice}
+          onPause={() => setWavePaused(true)} />}
         <div className="os-notifications" aria-live="polite">
           <AnimatePresence mode="wait">
             {notice && <motion.aside key={notice.id} className="os-toast" data-tone={notice.tone} initial={reducedMotion ? false : { x: 26 }} animate={{ x: 0 }} exit={{ x: 16 }} transition={reducedMotion ? { duration: 0 } : spring}>
@@ -955,30 +960,45 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
         <main className="os-desktop" id="desk" ref={desk} tabIndex={-1} data-maximized={maximized !== null}>
           <span className="os-desktop-wordmark" aria-hidden="true">WorkLab</span>
           <AppWindow {...windowProps(apps[0])}>
+            {xraySweeping && <div className="os-xray-scan" aria-hidden="true" />}
             <div className="os-filebar os-appsec-tools" aria-label="Инструменты редактора">
               <code><Code2 size={14} aria-hidden="true" /> {ticket.file}</code>
-              <div className="os-segments os-code-view" role="group" aria-label="Вид редактора">
-                <button type="button" aria-pressed={codeView === "plain"} onClick={() => changeCodeView("plain")}>Понятно</button>
-                <button type="button" aria-pressed={codeView === "code"} onClick={() => changeCodeView("code")}>Код</button>
+              <div className="os-tool-help">
+                <div className="os-code-view" data-view={codeView} role="group" aria-label="Вид редактора" aria-describedby="code-view-help">
+                  <button type="button" aria-pressed={codeView === "plain"} aria-describedby="code-view-help" onClick={() => changeCodeView("plain")}><Languages size={15} aria-hidden="true" /> Перевод</button>
+                  <button type="button" aria-pressed={codeView === "code"} aria-describedby="code-view-help" onClick={() => changeCodeView("code")}><Code2 size={15} aria-hidden="true" /> Код</button>
+                </div>
+                <span className="os-tool-tooltip" role="tooltip" id="code-view-help">{friday.codeViewHelp}</span>
               </div>
-              {fridayMission && <>
-              <button type="button" className="os-secondary" disabled={!waveRunning || !wave.xrayCharges || wave.xrayMs > 0 || !ticket.evidenceLineId || state.evidenceId === ticket.evidenceLineId}
-                onClick={() => useAbility("xray")}><ScanLine size={16} aria-hidden="true" /> X-Ray Импульс ({wave.xrayCharges})</button>
-              <button type="button" className="os-secondary" disabled={!waveRunning || !wave.freezeCharges || wave.freezeMs > 0}
-                onClick={() => useAbility("freeze")}><Snowflake size={16} aria-hidden="true" /> Заморозка деплоя ({wave.freezeCharges})</button>
-              </>}
+              {fridayMission ? (["xray", "freeze"] as const).map(ability => {
+                const xray = ability === "xray"
+                const charges = xray ? wave.xrayCharges : wave.freezeCharges
+                const running = xray ? wave.xrayMs > 0 : wave.freezeMs > 0
+                const unavailable = !waveRunning || !charges || running || xray && (!ticket.evidenceLineId || state.evidenceId === ticket.evidenceLineId)
+                const Icon = xray ? ScanSearch : Snowflake
+                const { label, hint } = friday.abilities[ability]
+                return <div className="os-tool-help" key={ability}>
+                  <button type="button" className="os-ability" data-ability={ability} data-running={running && charges > 0 || undefined} data-event-sound disabled={unavailable}
+                    aria-label={`${label}. Зарядов: ${charges}`} aria-describedby={`ability-${ability}-help`} onClick={() => useAbility(ability)}>
+                    <Icon size={16} aria-hidden="true" /> {label} <span aria-hidden="true">{charges}</span>
+                  </button>
+                  <span className="os-tool-tooltip" role="tooltip" id={`ability-${ability}-help`}>{hint}</span>
+                </div>
+              }) : <button type="button" className="os-secondary" {...tutorialAttrs("vault-trigger")} disabled={training && state.step !== "patch"}
+                aria-expanded={dockPanel === "vault"} onClick={event => toggleDockPanel("vault", event.currentTarget)}><LockKeyhole size={16} aria-hidden="true" /> Сейф секретов</button>}
             </div>
             <div className="os-window-scroll os-editor-scroll" ref={editorBody}>
               {renderTutorial("code")}
+              {renderTutorial("vault-trigger")}
               {fridayMission && state.step === "locate" && (!capturedLeak || !wave.rosterSeen) && <p className="friday-evidence-guide">
-                {!capturedLeak ? "Перехвати пакет с утечкой в WorkBrowser, чтобы отметить улику." : "Сверь адрес со списком банка в WorkChat, затем отметь улику."}
+                {!capturedLeak ? "Перехвати пакет с утечкой в WorkBrowser, чтобы отметить улику." : "Если сомневаешься, сверь адрес со списком банка в WorkChat."}
               </p>}
               <div className="preview-code os-code" data-view={codeView} {...tutorialAttrs("code")}>
                 {lines.map((line, index) => {
                   const hovered = hoveredLine?.id === line.id
                   const marked = state.evidenceId === line.id
+                  const xray = xrayVisible && line.id === ticket.evidenceLineId
                   const selected = selectedLine === line.id
-                  const canMark = state.step === "locate" && selected && !marked
                   const changed = patch?.changes.some(change => change.id === line.id)
                   const syntax = /^\s*(?:type\b|[}\])]+(?:\s+as const)?[;,]?\s*$)/.test(line.text)
                   const hintId = `workos-line-${line.id}`
@@ -993,8 +1013,8 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
                         data-active={activeLine === line.id}
                         data-threat={marked && state.step === "patch"}
                         data-marker={marked ? evidenceWrong ? "retry" : "evidence" : changed ? "changed" : undefined}
-                        data-xray={fridayMission && wave.xrayMs > 0 && state.evidenceId !== ticket.evidenceLineId && line.id === ticket.evidenceLineId || undefined}
-                        onClick={() => { setSelectedLine(line.id); if (sound) audio.play("click") }}
+                        data-xray={xray || undefined}
+                        onClick={() => setSelectedLine(line.id)}
                         onPointerEnter={event => {
                           if (codeView !== "code" || event.pointerType === "touch" || !editorBody.current) return
                           const lineBox = event.currentTarget.getBoundingClientRect()
@@ -1010,12 +1030,10 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
                           {codeView === "plain" && <span className="os-line-meaning">{line.hint}</span>}
                           <CodeSource text={line.text} detailed />
                         </span>
-                        {marked && <><span className="sr-only">{evidenceWrong ? "Улика не подтверждена" : "Улика отмечена"}</span>{evidenceWrong ? <CircleAlert size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}</>}
+                        {xray && <span className="os-xray-marker"><CircleAlert size={13} aria-hidden="true" /> Уязвимость</span>}
+                        {marked && <><span className="sr-only">{evidenceWrong ? "Улика не подтверждена" : "Улика отмечена"}</span>{!xray && (evidenceWrong ? <CircleAlert size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />)}</>}
                       </button>
                       {codeView === "code" && <span id={hintId} className="os-line-tooltip" data-visible={hovered || undefined} data-above={hovered && hoveredLine.above}>{line.hint}</span>}
-                      {canMark && <motion.div className="os-evidence-actions" initial={reducedMotion ? false : { opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }}>
-                        <button type="button" className="os-primary" disabled={fridayMission && !canMarkIncident} onClick={() => markEvidence(line.id)}><Check size={16} aria-hidden="true" /> Отметить улику</button>
-                      </motion.div>}
                       {selected && marked && evidenceWrong && <p className="os-evidence-error" role="status">Эта строка не объясняет утечку. Выбери другую.</p>}
                     </div>
                   )
@@ -1034,6 +1052,8 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
               )}
             </div>
             <footer className="os-window-footer os-code-footer">
+              {(state.step === "explore" || state.step === "locate") && <button type="button" className="os-primary os-mark-evidence" data-event-sound
+                onClick={markEvidence}><Check size={16} aria-hidden="true" /> Отметить улику</button>}
               {renderTutorial("code-footer")}
               {codeView === "code" && <p className="os-explanation"><HighlightedText text="**Наведись** на строку, чтобы узнать, что она делает." /></p>}
               {codeView === "plain" && state.step === "locate" && <p className="os-explanation">Нажми на строку, которую хочешь отметить как улику.</p>}
@@ -1061,7 +1081,8 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
             <div className="os-window-scroll os-browser-scroll" key={released ? "release" : fridayMission ? "incident" : browserTab} ref={browserBody}>
               {fridayMission && (wavePhase === "live" || wavePhase === "paused") && <>
                 <TrafficIntercept key={state.patchId ?? "before"} packets={(state.patchId && packetRuns[state.patchId]) || incidentPackets}
-                  paused={!waveRunning} guided={guide?.target === "traffic"} onArrive={finishTrafficCheck} onCatch={catchTraffic} onEvidence={openCode} />
+                  paused={!waveRunning} guided={guide?.target === "traffic"} onLaunch={() => { if (sound) audio.play("packetLaunch") }}
+                  onArrive={finishTrafficCheck} onCatch={catchTraffic} onEvidence={openCode} />
                 {wave.captured.length > 0 && <details className="friday-packet-log">
                   <summary>Журнал перехватов ({wave.captured.length})</summary>
                   <ul>{incidentPackets.filter(packet => wave.captured.includes(packet.id)).map(packet => <li key={packet.id}>{packet.channel} · {packet.route}</li>)}</ul>
@@ -1108,7 +1129,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
             {(!fridayMission || state.step === "stamp") && <footer className="os-window-footer os-browser-footer" data-has-tutorial={tutorialTarget === "browser" || undefined}>
               {renderTutorial("browser")}
               {!training && !fridayMission && browserInstruction && <p>{browserInstruction}</p>}
-              <motion.button type="button" className={`os-primary${trainingAction || fridayMission ? " os-training-action" : ""}`} {...tutorialAttrs("browser")} data-next-action={guide?.target === "release" || undefined} disabled={sendingOrder || fridayMission && !waveRunning}
+              <motion.button type="button" className={`os-primary${trainingAction || fridayMission ? " os-training-action" : ""}`} {...tutorialAttrs("browser")} data-event-sound={state.step === "stamp" || undefined} data-next-action={guide?.target === "release" || undefined} disabled={sendingOrder || fridayMission && !waveRunning}
                 whileTap={reducedMotion ? undefined : { scale: .96 }} transition={spring} onClick={browserAction.run}><ActionIcon size={17} aria-hidden="true" /> {sendingOrder ? "Отправка заказа…" : browserAction.label}</motion.button>
             </footer>}
           </AppWindow>
@@ -1150,14 +1171,15 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
         {fridayMission && wavePhase !== "live" && <FridayBrief key={wavePhase} phase={wavePhase} run={wave} waveNumber={waveNumber} waveCount={ticketCount} practice={practice}
           finalReport={finalReport} highMetrics={feedback.run.security >= 70 && feedback.run.stability >= 70} onAction={advanceWave} onReset={() => restart()} />}
         {practiceTip && <PracticeDialog key={tipIndex} {...practiceTip} action="Попробовать" onAction={() => setLastPracticeTip(tipIndex)} />}
-        {demo === "deploy" && <PracticeDialog title="Денис выкатил баг в прод!" text="В смене на нуле безопасность снизится на 35%, а на исправление останется 30 секунд. Заморозка в WorkCode останавливает отсчёт на 15 секунд. На смену даётся два заряда. В пробной волне ничего не списывается."
-          action="Показать экран поражения" onAction={() => setDemo("lost")} />}
-        {demo === "lost" && <PracticeDialog title="СТАРТАП ВЗЛОМАН" text="Так выглядит поражение при нулевой безопасности. В смене можно перезапустить задачу с 40% безопасности или начать заново. Здесь можно сразу вернуться к тренировке."
-          action="Вернуться к пробной волне" onAction={() => setDemo(null)} danger />}
+        {fridayMission && wave.freezeMs > 0 && wavePhase === "live" && <div className="os-frost" aria-hidden="true">
+          <span className="os-frost-wave" />
+          <Snowflake className="os-frost-crystal" /><Snowflake className="os-frost-crystal" />
+          <Snowflake className="os-frost-crystal" /><Snowflake className="os-frost-crystal" />
+        </div>}
 
         <div className="os-dock-area">
           {dockHint && tutorialStep !== null && <TutorialHint step={tutorialStep} atDock />}
-          {dockPanel && dockPanel !== "tickets" && (
+          {dockPanel && (
             <section className="os-popover" ref={popover} tabIndex={-1} aria-labelledby="workos-popover-title">
               <header><h2 id="workos-popover-title">{dockPanelTitle}</h2><button type="button" className="os-icon-button" aria-label="Закрыть панель" onClick={closeDockPanel}><X size={17} aria-hidden="true" /></button></header>
               {dockPanel === "vault" ? <div className="os-vault">
@@ -1206,12 +1228,10 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
               )
             })}
             <span className="os-dock-divider" aria-hidden="true" />
-            {!fridayMission && <motion.button type="button" className="os-dock-item" data-app="vault" {...tutorialAttrs("dock-vault")} disabled={training && state.step !== "patch"} aria-label="Сейф секретов" aria-expanded={dockPanel === "vault"} onClick={event => toggleDockPanel("vault", event.currentTarget)} whileTap={{ scale: .95 }} transition={spring}><DockIcon app="vault" /></motion.button>}
-            {!training && <motion.button type="button" className="os-dock-item" data-app="tickets" aria-label="Задачи" aria-expanded={dockPanel === "tickets"} onClick={event => toggleDockPanel("tickets", event.currentTarget)} whileTap={{ scale: .95 }} transition={spring}><DockIcon app="tickets" /></motion.button>}
-            {!training && <motion.button type="button" className="os-dock-item" data-app="achievements" aria-label="Достижения"
+            <motion.button type="button" className="os-dock-item" data-app="achievements" aria-label="Достижения"
               aria-expanded={dockPanel === "achievements"} onClick={event => toggleDockPanel("achievements", event.currentTarget)} whileTap={{ scale: .95 }} transition={spring}>
               <DockIcon app="achievements" />
-            </motion.button>}
+            </motion.button>
           </nav>
         </div>
 

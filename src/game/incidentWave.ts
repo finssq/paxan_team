@@ -25,5 +25,5 @@ export function readWave(value: unknown): WaveRun | undefined {
     credited: incidentPackets.filter(packet => credited.includes(packet.id)).map(packet => packet.id),
     score: numberInRange(fields.score, 0, 100_000, 0), combo: numberInRange(fields.combo, 1, 3, 1),
     xrayCharges: numberInRange(fields.xrayCharges, 0, friday.charges, friday.charges), freezeCharges: numberInRange(fields.freezeCharges, 0, friday.charges, friday.charges),
-    xrayMs: numberInRange(fields.xrayMs, 0, friday.xrayMs, 0), freezeMs: numberInRange(fields.freezeMs, 0, friday.freezeMs, 0) }
+    xrayMs: numberInRange(fields.xrayMs, 0, friday.xrayMs + friday.xraySweepMs, 0), freezeMs: numberInRange(fields.freezeMs, 0, friday.freezeMs, 0) }
 }

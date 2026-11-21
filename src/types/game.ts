@@ -1,7 +1,5 @@
 export type CheckResult = { ok: boolean; detail: string }
 
-export type Difficulty = "intern" | "medium" | "hard"
-
 export type ReviewChecks = {
   security: CheckResult
   feature: CheckResult

@@ -6,8 +6,8 @@ import type { Packet } from "../data/friday"
 
 type FlightPhase = "ready" | "flying" | "frozen" | "finishing" | "arrived"
 
-export function TrafficIntercept({ packets, paused, guided, onCatch, onArrive, onEvidence }: {
-  packets: Packet[]; paused: boolean; guided?: boolean; onCatch: (packet: Packet) => void; onArrive: () => void; onEvidence: () => void
+export function TrafficIntercept({ packets, paused, guided, onLaunch, onCatch, onArrive, onEvidence }: {
+  packets: Packet[]; paused: boolean; guided?: boolean; onLaunch: () => void; onCatch: (packet: Packet) => void; onArrive: () => void; onEvidence: () => void
 }) {
   const copy = friday.traffic
   const reducedMotion = useReducedMotion()
@@ -65,6 +65,7 @@ export function TrafficIntercept({ packets, paused, guided, onCatch, onArrive, o
     setChannelIndex(0)
     keyboardFlight.current = keyboard
     setPhase("flying")
+    onLaunch()
   }
 
   function freeze(packet: Packet) {
@@ -81,7 +82,7 @@ export function TrafficIntercept({ packets, paused, guided, onCatch, onArrive, o
     <section className="traffic-panel" data-flight={phase} aria-label={copy.title}>
       <header className="traffic-heading">
         <h3>{copy.title}</h3>
-        <button className="os-primary os-training-action" type="button" data-next-action={guided && (phase === "ready" || phase === "arrived") || undefined} disabled={paused || phase === "frozen" || inFlight} onClick={event => send(event.detail === 0)}>
+        <button className="os-primary os-training-action" type="button" data-event-sound data-next-action={guided && (phase === "ready" || phase === "arrived") || undefined} disabled={paused || phase === "frozen" || inFlight} onClick={event => send(event.detail === 0)}>
           <WalletCards size={17} aria-hidden="true" /> {inFlight ? copy.sending : copy.send}
         </button>
       </header>
@@ -95,14 +96,14 @@ export function TrafficIntercept({ packets, paused, guided, onCatch, onArrive, o
             <span className="traffic-channel-label">{packet.channel}</span>
             <div className="traffic-cable">
               <svg viewBox="0 0 240 10" preserveAspectRatio="none" aria-hidden="true"><path d="M0 5H240" /><path d="M0 5H240" /></svg>
-              {moving && <button type="button" className="traffic-capsule" data-frozen={held || undefined} style={{ left: `${position}%` }}
+              {moving && <button type="button" className="traffic-capsule" data-event-sound data-frozen={held || undefined} style={{ left: `${position}%` }}
                 aria-label={`${copy.freeze} · ${packet.channel}`} disabled={phase !== "flying" || paused} onClick={() => freeze(packet)}>
                 <Package size={17} aria-hidden="true" />
                 {held && <span>{copy.caught}</span>}
               </button>}
             </div>
             <span className="traffic-server" data-arrived={phase === "arrived" || index < channelIndex || undefined} aria-label="Сервер"><Server size={18} aria-hidden="true" /><i /></span>
-            {moving && <button type="button" className="os-secondary traffic-freeze" data-next-action={guided && phase === "flying" || undefined} disabled={paused || phase !== "flying"} onClick={() => freeze(packet)}>
+            {moving && <button type="button" className="os-secondary traffic-freeze" data-event-sound data-next-action={guided && phase === "flying" || undefined} disabled={paused || phase !== "flying"} onClick={() => freeze(packet)}>
               <Snowflake size={15} aria-hidden="true" /> {copy.freeze} <span>· {packet.channel}</span>
             </button>}
             {held && <motion.section className="traffic-inspector" tabIndex={-1} ref={inspector} aria-label={copy.inspector}

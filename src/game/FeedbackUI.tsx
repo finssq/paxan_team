@@ -6,6 +6,7 @@ import { achievements, characters, questSteps } from "./feedback"
 import type { Achievement, Message } from "./feedback"
 import type { ReviewStep } from "./review"
 import { trainingHints, trainingTeam } from "../data/training"
+import { friday, fridayChapter } from "../data/friday"
 
 function useDismissibleDetails() {
   const details = useRef<HTMLDetailsElement>(null)
@@ -126,11 +127,16 @@ export function QuickHelp({ onToggle }: { onToggle?: (open: boolean) => void }) 
   return (
     <details className="os-quick-help" ref={help} onKeyDown={closeDetailsOnEscape} onToggle={event => onToggle?.(event.currentTarget.open)}>
       <summary aria-label="Шпаргалка"><Info size={24} aria-hidden="true" /></summary>
-      <section className="os-help-panel" aria-label="Шпаргалка WorkOS">
+      <section className="os-help-panel" aria-label={`Справка · ${fridayChapter.title}`}>
         <ul role="list">
           <li><strong>WorkCode</strong> — смотри код, читай расшифровку строк и отмечай уязвимость.</li>
+          <li><strong>«Перевод»</strong> объясняет код на русском, <strong>«Код»</strong> показывает исходник.</li>
           <li><strong>WorkBrowser</strong> — проверяй, работает ли фича и проходит ли атака хакера.</li>
           <li><strong>WorkChat</strong> — следи за коллегами и проси подсказку у Макса.</li>
+        </ul>
+        <h3>Способности</h3>
+        <ul role="list">
+          {Object.values(friday.abilities).map(ability => <li key={ability.label}><strong>{ability.label}</strong> — {ability.hint}</li>)}
         </ul>
       </section>
     </details>
@@ -170,7 +176,6 @@ const dockIconNames = {
   browser: "WorkBrowser",
   chat: "WorkChat",
   vault: ".env Сейф",
-  tickets: "Задачи",
   achievements: "Достижения",
 }
 

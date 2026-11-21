@@ -61,7 +61,20 @@ const changes: Partial<Record<FeedbackEvent, Metrics>> = {
   clean: { security: 10, stability: 10 },
 }
 const initialRun: Run = { security: 80, stability: 85, hint: false, flawless: true }
-const initial: Feedback = { sound: false, tutorialDismissed: false, trainingIntroSeen: false, earned: [], completed: [], streak: 0, run: initialRun }
+const initial: Feedback = { sound: true, tutorialDismissed: false, trainingIntroSeen: false, earned: [], completed: [], streak: 0, run: initialRun }
+const soundKey = "worklab.sound.v1"
+
+export function readSoundPreference(fallback = true) {
+  try {
+    const saved = localStorage.getItem(soundKey)
+    if (saved === "true" || saved === "false") return saved === "true"
+  } catch {}
+  return fallback
+}
+
+export function saveSoundPreference(enabled: boolean) {
+  try { localStorage.setItem(soundKey, String(enabled)) } catch {}
+}
 const metric = (value: number) => Math.max(0, Math.min(value, 100))
 const validMetric = (value: unknown): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 100
 const validStoryTime = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0 && value <= 8_640_000_000_000_000
@@ -94,7 +107,7 @@ export function readFeedback(saved: string | null, ticketIds: string[], task: st
       : []
     const run = data.run
     return {
-      sound: data.sound === true,
+      sound: data.sound !== false,
       tutorialDismissed: typeof data.tutorialDismissed === "boolean"
         ? data.tutorialDismissed : completed.includes(ticketIds[0] ?? ""),
       trainingIntroSeen: data.trainingIntroSeen === true,

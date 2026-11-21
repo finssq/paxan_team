@@ -1,10 +1,10 @@
-import { Check, CircleAlert, CircleCheck, Clock3, Code2, FlaskConical, KeyRound, Lightbulb, LockKeyhole, MessageSquare, Minus, RotateCcw, ScanLine, Server, ShieldCheck, Snowflake, Square, Stamp, Trophy, Volume2, VolumeX, WalletCards, X } from "lucide-react"
+import { Check, CircleAlert, CircleCheck, Clock3, Code2, FlaskConical, KeyRound, LayoutGrid, Lightbulb, LockKeyhole, MessageSquare, Minus, RotateCcw, ScanLine, Server, ShieldCheck, Snowflake, Square, Stamp, Trophy, Volume2, VolumeX, WalletCards, X } from "lucide-react"
 import { animate, AnimatePresence, motion, MotionConfig, useReducedMotion } from "motion/react"
-import { useCallback, useEffect, useReducer, useRef, useState } from "react"
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react"
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react"
 import type { createSfx } from "../audio/sfx"
 import { trainingChat, trainingKey, trainingLeakExplanation } from "../data/training"
-import { friday, fridayChapter, incidentPackets, incidentTicket, packetRuns } from "../data/friday"
+import { friday, fridayChapter, incidentPackets, incidentTicket, packetRuns, practiceTicket, practiceTips } from "../data/friday"
 import { storyCopy, storyForWave } from "../data/story"
 import type { Packet } from "../data/friday"
 import type { Chapter, CheckResult, Ticket } from "../types/game"
@@ -15,7 +15,7 @@ import { achievements, characters, mentorGreeting, reactions, readFeedback, reco
 import type { Feedback, FeedbackEvent, Message } from "./feedback"
 import { AchievementList, DockIcon, HighlightedText, Portrait, Quest, QuickHelp, SkipTutorialButton, TrainingComplete, TrainingTeam, TutorialHint } from "./FeedbackUI"
 import type { TutorialStep } from "./FeedbackUI"
-import { AllowedHosts, FridayBrief, FridayHud } from "./FridayUI"
+import { AllowedHosts, FridayBrief, FridayHud, PracticeDialog } from "./FridayUI"
 import type { WavePhase } from "./FridayUI"
 import { initialWave } from "./incidentWave"
 import { TrafficIntercept } from "./TrafficIntercept"
@@ -26,6 +26,13 @@ const apps = [
   { id: "browser", name: "WorkBrowser", label: "Браузер", icon: FlaskConical },
   { id: "chat", name: "WorkChat", label: "Чат", icon: MessageSquare },
 ] as const
+
+type CodeView = "plain" | "code"
+const codeViewKey = "worklab.code-view.v1"
+
+function loadCodeView(): CodeView {
+  try { return window.localStorage.getItem(codeViewKey) === "code" ? "code" : "plain" } catch { return "plain" }
+}
 
 type DeskApp = typeof apps[number]["id"]
 type DockPanel = "vault" | "tickets" | "achievements"
@@ -43,10 +50,6 @@ const orderTransitMs = 620
 const resizeEdges = ["n", "ne", "e", "se", "s", "sw", "w", "nw"] as const
 type WindowEdge = typeof resizeEdges[number]
 type WindowFrame = { x: number; y: number; width: number; height: number }
-
-function getWindowScroller(body: HTMLElement) {
-  return window.matchMedia(compactLayout).matches ? body.parentElement ?? body : body
-}
 
 function openingMessages(ticket: Ticket, includeHint = false): IncomingMessage[] {
   const messages: IncomingMessage[] = [
@@ -106,7 +109,7 @@ function DeskClock() {
   return <time className="os-clock" dateTime={time}>{time}</time>
 }
 
-function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximize, restore, onSkip, shake = 0, children }: {
+function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximize, restore, onSkip, layoutRevision, shake = 0, children }: {
   app: typeof apps[number]
   layer: number
   active: boolean
@@ -117,12 +120,14 @@ function AppWindow({ app, layer, active, hidden, maximized, focus, hide, maximiz
   maximize: () => void
   restore: () => void
   onSkip?: () => void
+  layoutRevision: number
   shake?: number
   children: ReactNode
 }) {
   const Icon = app.icon
   const reducedMotion = useReducedMotion()
   const [frame, setFrame] = useState<WindowFrame | null>(null)
+  useLayoutEffect(() => setFrame(null), [layoutRevision])
   const [gesture, setGesture] = useState<"move" | WindowEdge | null>(null)
   const dragRef = useRef<{ pointer: number; x: number; y: number; origin: WindowFrame; mode: "move" | WindowEdge } | null>(null)
   const panel = useRef<HTMLElement>(null)
@@ -251,7 +256,11 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
   chapter: Chapter; ticket: Ticket; saved: ReturnType<typeof readShift>; audio: ReturnType<typeof createSfx>
   training: boolean; difficultyLabel: string; onStartShift: (feedback: Feedback) => void
 }) {
-  const fridayMission = ticket.id === incidentTicket.id
+  const practice = ticket.id === practiceTicket.id
+  const fridayMission = practice || ticket.id === incidentTicket.id
+  const [layoutRevision, setLayoutRevision] = useState(0)
+  const [lastPracticeTip, setLastPracticeTip] = useState(-1)
+  const [demo, setDemo] = useState<"deploy" | "lost" | null>(null)
   const reducedMotion = useReducedMotion()
   const [state, dispatch] = useReducer((current: ReviewState, action: ReviewAction) => review(ticket, current, action), saved?.state ?? initialReview)
   const [active, setActive] = useState<DeskApp>(() => {
@@ -272,6 +281,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
   const sendTimer = useRef<number | undefined>(undefined)
   const [selectedLine, setSelectedLine] = useState(() => state.evidenceId ?? null)
   const [hoveredLine, setHoveredLine] = useState<{ id: string; above: boolean } | null>(null)
+  const [codeView, setCodeView] = useState(loadCodeView)
   const [unread, setUnread] = useState(false)
   const [feedback, setFeedback] = useState(() => saved?.feedback ?? readFeedback(null, [], ticket.id, false))
   const feedbackRef = useRef(feedback)
@@ -301,19 +311,28 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
   const released = state.step === "released"
   const wave = feedback.wave ?? initialWave
   const wavePhase: WavePhase = released ? "won" : !wave.started ? "ready"
-    : !feedback.run.security ? "lost"
+    : !practice && !feedback.run.security ? "lost"
       : !wave.remainingMs ? "timeout" : wavePaused ? "paused" : "live"
-  const waveRunning = fridayMission && wavePhase === "live" && !helpOpen
   const capturedLeak = incidentPackets.some(packet => packet.unsafe && wave.captured.includes(packet.id))
+  const tipIndex = state.step === "stamp" ? 3 : state.patchId ? 2 : capturedLeak ? 1 : 0
+  const practiceTip = practice && wavePhase === "live" && tipIndex > lastPracticeTip && !demo ? practiceTips[tipIndex] : undefined
+  const waveRunning = fridayMission && wavePhase === "live" && !helpOpen && !practiceTip && !demo
+  const guide = fridayMission && wavePhase === "live" ? (
+    !capturedLeak ? { step: 1, target: "traffic", text: "Нажми «Провести тестовую оплату» в WorkBrowser и поймай летящий пакет." }
+      : !state.patchId ? { step: 2, target: "code", text: "Сверь подозрительный адрес с чатом Макса и выбери исправление в WorkCode." }
+        : state.checks && state.step === "retest" ? { step: 3, target: "code", text: "Одна из проверок не прошла. Выбери другое исправление в WorkCode." }
+          : state.step === "stamp" ? { step: 3, target: "release", text: "Обе проверки прошли. Нажми «В ПРОДАКШН», чтобы выпустить исправление." }
+            : { step: 3, target: "traffic", text: "Снова проведи тестовую оплату, чтобы проверить исправление." }
+  ) : undefined
   const canMarkIncident = capturedLeak && wave.rosterSeen && waveRunning
   const ticketCount = chapter.tickets.length + chapter.upcoming.length
   const ticketIndex = chapter.tickets.indexOf(ticket)
   const waveNumber = ticketIndex + 1
-  const storyEnabled = !training && chapter === fridayChapter && waveNumber > 0
+  const storyEnabled = !training && !practice && chapter === fridayChapter && waveNumber > 0
   const scene = storyForWave(waveNumber)
   const storyRecord = storyEnabled ? feedback.story?.[ticket.id] : undefined
   const finalReport = storyEnabled && released && waveNumber === ticketCount
-  const storyBadge = training ? { label: storyCopy.warmup, tone: "neutral" }
+  const storyBadge = training || practice ? { label: storyCopy.warmup, tone: "neutral" }
     : finalReport ? { label: storyCopy.protected, tone: "success" }
       : storyEnabled ? { label: scene.badge, tone: scene.tone } : undefined
   const storyVisible = storyEnabled && wavePhase === "live"
@@ -438,10 +457,11 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
       const elapsed = Math.floor(now - lastTick)
       lastTick += elapsed
       const current = feedbackRef.current
-      if (!current.wave?.remainingMs || !current.run.security) return
+      if (!current.wave?.remainingMs || !practice && !current.run.security) return
+      if (practice && !current.wave.freezeMs && !current.wave.xrayMs) return
       const freezeMs = Math.max(0, current.wave.freezeMs - elapsed)
       const xrayMs = Math.max(0, current.wave.xrayMs - elapsed)
-      const remainingMs = Math.max(0, current.wave.remainingMs - Math.max(0, elapsed - current.wave.freezeMs))
+      const remainingMs = practice ? current.wave.remainingMs : Math.max(0, current.wave.remainingMs - Math.max(0, elapsed - current.wave.freezeMs))
       const deployed = !remainingMs
       const run = deployed ? { ...current.run, flawless: false, security: Math.max(0, current.run.security - friday.timeoutDamage) } : current.run
       const next = { ...current, wave: { ...current.wave, remainingMs: deployed && run.security ? friday.retryMs : remainingMs,
@@ -457,7 +477,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
       }
     }, 200)
     return () => window.clearInterval(interval)
-  }, [audio, notify, waveRunning])
+  }, [audio, notify, practice, waveRunning])
 
   useEffect(() => {
     if (!fridayMission || !shake || reducedMotion || !desk.current?.parentElement) return
@@ -494,7 +514,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
 
   useEffect(() => {
     if (active !== "chat" || !chatBody.current) return
-    const scroller = getWindowScroller(chatBody.current)
+    const scroller = chatBody.current
     scroller.scrollTop = scroller.scrollHeight
   }, [messages, typing, active, storyRecord])
 
@@ -503,7 +523,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
   }, [active, state.step])
 
   useEffect(() => {
-    const scroller = browserBody.current?.parentElement
+    const scroller = browserBody.current
     if (scroller && window.matchMedia(compactLayout).matches) scroller.scrollTop = 0
   }, [browserTab, released, state.checks])
 
@@ -523,6 +543,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
     if (training) return
     const previous = feedbackRef.current
     const next = recordFeedback(previous, event, ticket.id, ticketCount, Boolean(state.patchId))
+    if (practice) next.run = { ...next.run, security: previous.run.security }
     if (fridayMission && next.wave) {
       if (event === "feature") next.run = { ...next.run, stability: previous.run.stability }
       if (event === "hint" || event === "feature" || event === "security") next.wave = { ...next.wave, combo: 1 }
@@ -577,7 +598,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
     const list = patchList.current
     const body = editorBody.current
     if (!list || !body) return
-    const scroller = getWindowScroller(body)
+    const scroller = body
     const topInset = Number.parseFloat(getComputedStyle(scroller).scrollPaddingTop) || 0
     scroller.scrollTop += list.getBoundingClientRect().top - scroller.getBoundingClientRect().top - topInset
   }
@@ -587,10 +608,16 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
     window.requestAnimationFrame(scrollToPatches)
   }
 
+  function changeCodeView(view: CodeView) {
+    setCodeView(view)
+    setHoveredLine(null)
+    try { window.localStorage.setItem(codeViewKey, view) } catch {}
+  }
+
   function openTraffic() {
     openApp("browser")
     window.requestAnimationFrame(() => {
-      if (browserBody.current) getWindowScroller(browserBody.current).scrollTop = 0
+      if (browserBody.current) browserBody.current.scrollTop = 0
     })
   }
 
@@ -748,6 +775,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
   }
 
   function advanceWave() {
+    if (practice && wavePhase === "won") { beginShift(); return }
     if (wavePhase === "paused") {
       setWavePaused(false)
     } else if (wavePhase === "ready") {
@@ -759,6 +787,17 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
     } else {
       restart(wavePhase === "lost")
     }
+  }
+
+  function openDeployDemo() {
+    setDemo("deploy")
+    if (sound) audio.play("breach")
+  }
+
+  function alignWindows() {
+    setHidden([])
+    setMaximized(null)
+    setLayoutRevision(value => value + 1)
   }
 
   function useAbility(ability: "xray" | "freeze") {
@@ -816,6 +855,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
   function windowProps(app: typeof apps[number]) {
     return {
       app,
+      layoutRevision,
       layer: stack.indexOf(app.id) + 1,
       active: active === app.id,
       hidden: hidden.includes(app.id),
@@ -853,8 +893,9 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
   return (
     <MotionConfig reducedMotion="user">
       <div className="workos" data-training={training || undefined} data-friday={fridayMission || undefined}
+        data-guide-code={guide?.target === "code" || undefined}
         data-frost={fridayMission && wave.freezeMs > 0 && wavePhase === "live" || undefined}
-        data-game-over={fridayMission && wavePhase === "lost" || undefined}
+        data-game-over={fridayMission && (wavePhase === "lost" || demo === "lost") || undefined}
         onClickCapture={audio.unlock}
         onKeyDownCapture={audio.unlock}
         onKeyDown={event => { if (event.key === "Escape") { closeDockPanel(); setNotices(queue => queue.slice(1)) } }}>
@@ -867,10 +908,10 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
             </svg><span>WorkLab</span>
           </a>
           {storyBadge ? <div className="os-quest os-story-stage">
-            <strong>{training ? "Задача 0 · Обучение" : chapter.title}</strong><span data-tone={storyBadge.tone}>{storyBadge.label}</span>
+            <strong>{training || practice ? "Задача 0 · Пробная волна" : chapter.title}</strong><span data-tone={storyBadge.tone}>{storyBadge.label}</span>
           </div> : <Quest step={state.step} />}
           <div className="os-menu-tools">
-            {!training && <button type="button" className="os-task-progress" aria-expanded={dockPanel === "tickets"} onClick={event => toggleDockPanel("tickets", event.currentTarget)}>
+            {!training && !practice && <button type="button" className="os-task-progress" aria-expanded={dockPanel === "tickets"} onClick={event => toggleDockPanel("tickets", event.currentTarget)}>
               {fridayMission ? "Волна" : "Задачи"} {ticketIndex + 1}/{ticketCount}
               <span className="os-task-dots" aria-hidden="true">
                 {chapter.tickets.map(item => <i key={item.id} data-status={completed.has(item.id) ? "done" : item.id === ticket.id ? "current" : undefined} />)}
@@ -881,6 +922,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
               {sound ? <Volume2 size={17} aria-hidden="true" /> : <VolumeX size={17} aria-hidden="true" />}
             </button>
             <QuickHelp onToggle={fridayMission ? setHelpOpen : undefined} />
+            {!training && <button type="button" className="os-icon-button os-align" title="Выровнять окна" aria-label="Выровнять окна" onClick={alignWindows}><LayoutGrid size={17} aria-hidden="true" /></button>}
             <DeskClock />
           </div>
           {dockPanel === "tickets" && (
@@ -896,7 +938,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
             </section>
           )}
         </header>
-        {fridayMission && <FridayHud run={wave} phase={wavePhase} security={feedback.run.security}
+        {fridayMission && <FridayHud run={wave} phase={wavePhase} security={feedback.run.security} guide={guide} practice={practice} onDemo={openDeployDemo}
           onPause={() => setWavePaused(true)} onOpenBrowser={openTraffic} />}
         <div className="os-notifications" aria-live="polite">
           <AnimatePresence mode="wait">
@@ -913,27 +955,32 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
         <main className="os-desktop" id="desk" ref={desk} tabIndex={-1} data-maximized={maximized !== null}>
           <span className="os-desktop-wordmark" aria-hidden="true">WorkLab</span>
           <AppWindow {...windowProps(apps[0])}>
-            <div className="os-filebar">
+            <div className="os-filebar os-appsec-tools" aria-label="Инструменты редактора">
               <code><Code2 size={14} aria-hidden="true" /> {ticket.file}</code>
-            </div>
-            {fridayMission && <div className="os-appsec-tools" aria-label="Инструменты AppSec">
+              <div className="os-segments os-code-view" role="group" aria-label="Вид редактора">
+                <button type="button" aria-pressed={codeView === "plain"} onClick={() => changeCodeView("plain")}>Понятно</button>
+                <button type="button" aria-pressed={codeView === "code"} onClick={() => changeCodeView("code")}>Код</button>
+              </div>
+              {fridayMission && <>
               <button type="button" className="os-secondary" disabled={!waveRunning || !wave.xrayCharges || wave.xrayMs > 0 || !ticket.evidenceLineId || state.evidenceId === ticket.evidenceLineId}
                 onClick={() => useAbility("xray")}><ScanLine size={16} aria-hidden="true" /> X-Ray Импульс ({wave.xrayCharges})</button>
               <button type="button" className="os-secondary" disabled={!waveRunning || !wave.freezeCharges || wave.freezeMs > 0}
                 onClick={() => useAbility("freeze")}><Snowflake size={16} aria-hidden="true" /> Заморозка деплоя ({wave.freezeCharges})</button>
-            </div>}
+              </>}
+            </div>
             <div className="os-window-scroll os-editor-scroll" ref={editorBody}>
               {renderTutorial("code")}
               {fridayMission && state.step === "locate" && (!capturedLeak || !wave.rosterSeen) && <p className="friday-evidence-guide">
                 {!capturedLeak ? "Перехвати пакет с утечкой в WorkBrowser, чтобы отметить улику." : "Сверь адрес со списком банка в WorkChat, затем отметь улику."}
               </p>}
-              <div className="preview-code os-code" {...tutorialAttrs("code")}>
+              <div className="preview-code os-code" data-view={codeView} {...tutorialAttrs("code")}>
                 {lines.map((line, index) => {
                   const hovered = hoveredLine?.id === line.id
                   const marked = state.evidenceId === line.id
                   const selected = selectedLine === line.id
                   const canMark = state.step === "locate" && selected && !marked
                   const changed = patch?.changes.some(change => change.id === line.id)
+                  const syntax = /^\s*(?:type\b|[}\])]+(?:\s+as const)?[;,]?\s*$)/.test(line.text)
                   const hintId = `workos-line-${line.id}`
                   return (
                     <div key={line.id} className="os-code-row">
@@ -941,16 +988,17 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
                         type="button"
                         className="preview-line os-line"
                         aria-pressed={selected}
-                        aria-describedby={hintId}
+                        aria-describedby={codeView === "code" ? hintId : undefined}
+                        data-syntax={codeView === "plain" && syntax || undefined}
                         data-active={activeLine === line.id}
                         data-threat={marked && state.step === "patch"}
                         data-marker={marked ? evidenceWrong ? "retry" : "evidence" : changed ? "changed" : undefined}
                         data-xray={fridayMission && wave.xrayMs > 0 && state.evidenceId !== ticket.evidenceLineId && line.id === ticket.evidenceLineId || undefined}
                         onClick={() => { setSelectedLine(line.id); if (sound) audio.play("click") }}
                         onPointerEnter={event => {
-                          if (event.pointerType === "touch" || !editorBody.current) return
+                          if (codeView !== "code" || event.pointerType === "touch" || !editorBody.current) return
                           const lineBox = event.currentTarget.getBoundingClientRect()
-                          const scrollBox = getWindowScroller(editorBody.current).getBoundingClientRect()
+                          const scrollBox = editorBody.current.getBoundingClientRect()
                           const below = scrollBox.bottom - lineBox.bottom
                           const above = lineBox.top - scrollBox.top
                           setHoveredLine({ id: line.id, above: below < 64 && above > below })
@@ -958,10 +1006,13 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
                         onPointerLeave={() => setHoveredLine(null)}
                       >
                         <span className="preview-line-number">{String(index + 1).padStart(2, "0")}</span>
-                        <CodeSource text={line.text} detailed />
+                        <span className="os-line-content">
+                          {codeView === "plain" && <span className="os-line-meaning">{line.hint}</span>}
+                          <CodeSource text={line.text} detailed />
+                        </span>
                         {marked && <><span className="sr-only">{evidenceWrong ? "Улика не подтверждена" : "Улика отмечена"}</span>{evidenceWrong ? <CircleAlert size={15} aria-hidden="true" /> : <Check size={15} aria-hidden="true" />}</>}
                       </button>
-                      <span id={hintId} className="os-line-tooltip" data-visible={hovered || undefined} data-above={hovered && hoveredLine.above}>{line.hint}</span>
+                      {codeView === "code" && <span id={hintId} className="os-line-tooltip" data-visible={hovered || undefined} data-above={hovered && hoveredLine.above}>{line.hint}</span>}
                       {canMark && <motion.div className="os-evidence-actions" initial={reducedMotion ? false : { opacity: 0, y: -5 }} animate={{ opacity: 1, y: 0 }}>
                         <button type="button" className="os-primary" disabled={fridayMission && !canMarkIncident} onClick={() => markEvidence(line.id)}><Check size={16} aria-hidden="true" /> Отметить улику</button>
                       </motion.div>}
@@ -984,7 +1035,8 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
             </div>
             <footer className="os-window-footer os-code-footer">
               {renderTutorial("code-footer")}
-              <p className="os-explanation"><HighlightedText text="**Наведись** на строку, чтобы узнать, что она делает." /></p>
+              {codeView === "code" && <p className="os-explanation"><HighlightedText text="**Наведись** на строку, чтобы узнать, что она делает." /></p>}
+              {codeView === "plain" && state.step === "locate" && <p className="os-explanation">Нажми на строку, которую хочешь отметить как улику.</p>}
               {state.step === "patch" && <p role="status">{training ? "Улика подтверждена. Загляни в подсвеченный сейф." : "Улика подтверждена. Выберите исправление."}</p>}
               {(state.step === "retest" || state.step === "stamp") && <button type="button" className="os-secondary" {...tutorialAttrs("code-footer")} onClick={() => { setBrowserTab("checks"); openApp("browser") }}>К проверкам в браузере</button>}
             </footer>
@@ -1009,7 +1061,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
             <div className="os-window-scroll os-browser-scroll" key={released ? "release" : fridayMission ? "incident" : browserTab} ref={browserBody}>
               {fridayMission && (wavePhase === "live" || wavePhase === "paused") && <>
                 <TrafficIntercept key={state.patchId ?? "before"} packets={(state.patchId && packetRuns[state.patchId]) || incidentPackets}
-                  paused={!waveRunning} onArrive={finishTrafficCheck} onCatch={catchTraffic} onEvidence={openCode} />
+                  paused={!waveRunning} guided={guide?.target === "traffic"} onArrive={finishTrafficCheck} onCatch={catchTraffic} onEvidence={openCode} />
                 {wave.captured.length > 0 && <details className="friday-packet-log">
                   <summary>Журнал перехватов ({wave.captured.length})</summary>
                   <ul>{incidentPackets.filter(packet => wave.captured.includes(packet.id)).map(packet => <li key={packet.id}>{packet.channel} · {packet.route}</li>)}</ul>
@@ -1056,12 +1108,13 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
             {(!fridayMission || state.step === "stamp") && <footer className="os-window-footer os-browser-footer" data-has-tutorial={tutorialTarget === "browser" || undefined}>
               {renderTutorial("browser")}
               {!training && !fridayMission && browserInstruction && <p>{browserInstruction}</p>}
-              <motion.button type="button" className={`os-primary${trainingAction || fridayMission ? " os-training-action" : ""}`} {...tutorialAttrs("browser")} disabled={sendingOrder || fridayMission && !waveRunning}
+              <motion.button type="button" className={`os-primary${trainingAction || fridayMission ? " os-training-action" : ""}`} {...tutorialAttrs("browser")} data-next-action={guide?.target === "release" || undefined} disabled={sendingOrder || fridayMission && !waveRunning}
                 whileTap={reducedMotion ? undefined : { scale: .96 }} transition={spring} onClick={browserAction.run}><ActionIcon size={17} aria-hidden="true" /> {sendingOrder ? "Отправка заказа…" : browserAction.label}</motion.button>
             </footer>}
           </AppWindow>
 
           <AppWindow {...windowProps(apps[2])}>
+            {fridayMission && <AllowedHosts />}
             <div className="os-window-scroll os-messages" role="log" aria-label="Сообщения команды" ref={chatBody}>
               {visibleMessages.map((message, index) => (
                 <article className="os-message" data-player={message.author === "player" || undefined} key={`${message.sentAt.getTime()}:${message.author}:${index}`}>
@@ -1082,7 +1135,6 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
                   {characters[typing.author].name} печатает…
                 </p>
               )}
-              {fridayMission && <AllowedHosts />}
             </div>
             {!training && <footer className="os-window-footer os-chat-footer">
               {storyVisible && storyRecord && !storyRecord.replyAt && <div className="os-story-replies" aria-label={storyCopy.replies}>
@@ -1095,8 +1147,13 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
         </main>
         {showTrainingIntro && <TrainingTeam onContinue={openTrainingChat} />}
         {training && released && <TrainingComplete onStart={beginShift} />}
-        {fridayMission && wavePhase !== "live" && <FridayBrief key={wavePhase} phase={wavePhase} run={wave} waveNumber={waveNumber} waveCount={ticketCount}
+        {fridayMission && wavePhase !== "live" && <FridayBrief key={wavePhase} phase={wavePhase} run={wave} waveNumber={waveNumber} waveCount={ticketCount} practice={practice}
           finalReport={finalReport} highMetrics={feedback.run.security >= 70 && feedback.run.stability >= 70} onAction={advanceWave} onReset={() => restart()} />}
+        {practiceTip && <PracticeDialog key={tipIndex} {...practiceTip} action="Попробовать" onAction={() => setLastPracticeTip(tipIndex)} />}
+        {demo === "deploy" && <PracticeDialog title="Денис выкатил баг в прод!" text="В смене на нуле безопасность снизится на 35%, а на исправление останется 30 секунд. Заморозка в WorkCode останавливает отсчёт на 15 секунд. На смену даётся два заряда. В пробной волне ничего не списывается."
+          action="Показать экран поражения" onAction={() => setDemo("lost")} />}
+        {demo === "lost" && <PracticeDialog title="СТАРТАП ВЗЛОМАН" text="Так выглядит поражение при нулевой безопасности. В смене можно перезапустить задачу с 40% безопасности или начать заново. Здесь можно сразу вернуться к тренировке."
+          action="Вернуться к пробной волне" onAction={() => setDemo(null)} danger />}
 
         <div className="os-dock-area">
           {dockHint && tutorialStep !== null && <TutorialHint step={tutorialStep} atDock />}
@@ -1141,6 +1198,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, di
                 <motion.button key={app.id} type="button" className="os-dock-item" data-app={app.id} data-open={isOpen}
                   disabled={training && app.id === "code" && state.step === "explore"}
                   {...(app.id === "chat" ? {} : tutorialAttrs(`dock-${app.id}`))}
+                  data-next-action={app.id === "code" && guide?.target === "code" && !canSeeApp("code") || undefined}
                   aria-label={app.label} aria-controls={`workos-${app.id}`} aria-pressed={isOpen && active === app.id} onClick={() => openApp(app.id)} whileTap={{ scale: .95 }} transition={spring}>
                   <DockIcon app={app.id} />
                   {app.id === "chat" && unread && <span className="os-unread" aria-label="Новые сообщения">1</span>}

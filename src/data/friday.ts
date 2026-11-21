@@ -88,17 +88,17 @@ export const incidentTicket = {
   ],
   patches: [
     {
-      id: "disable-reports", title: "Отключить модуль report-sync", detail: "Оставить платёжный шлюз и убрать канал отчётов.",
+      id: "disable-reports", title: "Отключить отправку отчётов", detail: "После покупки данные заказа больше не будут уходить по адресу report-sync.demo. Покупатель всё ещё сможет оплатить заказ, а счётчик покупок продолжит работать.",
       changes: [{ id: "switches", text: "const enabled = { checkout: true, metrics: true, reports: false };", hint: "Оплата продолжает работать без стороннего модуля отчётов." }],
       checks: { security: securityPasses, feature: paymentPasses },
     },
     {
-      id: "disable-metrics", title: "Отключить сбор счётчиков", detail: "Отключить metrics.demo, оставив платёжный шлюз и отчёты.",
+      id: "disable-metrics", title: "Отключить счётчик покупок", detail: "Сервис перестанет сообщать на metrics.demo, сколько раз покупатели открыли оплату. Покупки и отправка отчётов на report-sync.demo продолжатся.",
       changes: [{ id: "switches", text: "const enabled = { checkout: true, metrics: false, reports: true };", hint: "Технические счётчики исчезли, модуль отчётов всё ещё подключён." }],
       checks: { security: securityFails, feature: paymentPasses },
     },
     {
-      id: "pause-release", title: "Приостановить релиз оплаты", detail: "Остановить отправку данных вместе с возможностью оплатить заказ.",
+      id: "pause-release", title: "Остановить оплату целиком", detail: "Сервис перестанет принимать платежи, отправлять отчёты и считать покупки. Обычный покупатель тоже не сможет оплатить заказ.",
       changes: [{ id: "switches", text: "const enabled = { checkout: false, metrics: true, reports: true };", hint: "Оплата и её дополнительные модули остановлены." }],
       checks: { security: securityPasses, feature: { ok: false, detail: "Заказ не оплачен. Выпуск оплаты приостановлен." } },
     },
@@ -118,3 +118,12 @@ export const packetRuns: Record<string, Packet[]> = {
 export const fridayChapter: Chapter = {
   title: "Вечер пятницы", tickets: [incidentTicket], upcoming: ["Двойное списание", "Поддельный платёжный модуль"],
 }
+
+export const practiceTicket: Ticket = { ...incidentTicket, id: "friday-practice", title: "Пробная волна" }
+
+export const practiceTips = [
+  { title: "1/4 · Перехват", text: "Проведи тестовую оплату в WorkBrowser. На каждый пакет есть 5 секунд. Нажми на капсулу или «Заморозить пакет». Инспектор покажет адрес и данные. Отпусти пакет A, чтобы запустить B. Тест можно повторять сколько угодно." },
+  { title: "2/4 · Расследование", text: "Сверь адрес из инспектора со списком Макса в WorkChat. Если застрянешь, спроси Макса. В WorkCode режим «Понятно» объясняет строки. X-Ray на 4 секунды подсвечивает улику. Отметь строку, где появляются данные из пакета." },
+  { title: "3/4 · Исправление", text: "Варианты исправления открываются в WorkCode. После выбора вернись в WorkBrowser и повтори тестовую оплату. Безопасность и работа оплаты проверяются отдельно. Если тест не пройдёт, выбери другое исправление." },
+  { title: "4/4 · Выпуск", text: "Обе проверки прошли. Поставь штамп «В ПРОДАКШН». Перехваты и выпуск дают очки. Чистое прохождение повышает комбо, а ошибки и полная подсказка Макса его сбрасывают." },
+]

@@ -4,7 +4,7 @@ import type { FormEvent } from "react"
 import { createSfx } from "./audio/sfx"
 import sponsorLogo from "./centr-invest.svg"
 import { chapter, paymentPreview, paymentTicket } from "./data/paymentPreview"
-import { fridayChapter, incidentTicket } from "./data/friday"
+import { fridayChapter, incidentTicket, practiceTicket } from "./data/friday"
 import { trainingTicket } from "./data/training"
 import workLabMark from "./favicon.svg"
 import { clearShift, initialReview, readShift, saveShift } from "./game/review"
@@ -35,7 +35,8 @@ function loadDifficulty(): Difficulty {
 
 function readCurrentShift(difficulty: Difficulty) {
   const saved = difficulty === "medium"
-    ? readShift(fridayChapter, trainingTicket, ["friday-profile", "friday-transfer", "friday-traffic"]) : readShift(chapter, trainingTicket)
+    ? readShift(fridayChapter, practiceTicket, ["friday-profile", "friday-transfer", "friday-traffic"]) ?? readShift(fridayChapter, trainingTicket)
+    : readShift(chapter, practiceTicket) ?? readShift(chapter, trainingTicket)
   if (saved || difficulty !== "medium") return saved
   const previous = readShift(chapter)
   return previous && {
@@ -70,12 +71,13 @@ function DeskStartup({ audio, difficulty }: { audio: ReturnType<typeof createSfx
   }, [])
 
   if (Desk && Desk !== "failed") {
-    const ticket = saved?.ticket ?? trainingTicket
+    const ticket = saved?.ticket.id === trainingTicket.id || !saved ? practiceTicket : saved.ticket
     const training = ticket.id === trainingTicket.id
-    return <Desk key={ticket.id} chapter={activeChapter} ticket={ticket} saved={saved} audio={audio} training={training} difficultyLabel={difficultyOptions[difficulty].label} onStartShift={feedback => {
+    return <Desk key={ticket.id} chapter={activeChapter} ticket={ticket} saved={saved?.ticket.id === ticket.id ? saved : null} audio={audio} training={training} difficultyLabel={difficultyOptions[difficulty].label} onStartShift={feedback => {
       const firstTask = difficulty === "medium" ? incidentTicket : paymentTicket
-      saveShift(firstTask, initialReview, feedback)
-      setSaved({ ticket: firstTask, state: initialReview, feedback })
+      const next = { ...feedback, wave: undefined, completed: [], streak: 0, run: readFeedback(null, [], firstTask.id, false).run }
+      saveShift(firstTask, initialReview, next)
+      setSaved({ ticket: firstTask, state: initialReview, feedback: next })
     }} />
   }
 
@@ -231,7 +233,8 @@ function DifficultySelection({ onStart }: { onStart: (difficulty: Difficulty) =>
 function getRoute() {
   const hash = window.location.hash
   if (hash === "#desk") return "desk"
-  if (hash === "#game") return "difficulty"
+  if (hash === "#game") return "modules"
+  if (hash === "#worklab") return "difficulty"
   return "home"
 }
 
@@ -263,7 +266,8 @@ export function App() {
   if (route === "desk") return <DeskStartup audio={audio} difficulty={difficulty} />
 
   const choosingDifficulty = route === "difficulty"
-  const saved = choosingDifficulty ? null : readCurrentShift(difficulty)
+  const choosingGame = route === "modules"
+  const saved = choosingDifficulty || choosingGame ? null : readCurrentShift(difficulty)
   const activeChapter = difficulty === "medium" ? fridayChapter : chapter
 
   return (
@@ -275,12 +279,22 @@ export function App() {
             <img src={workLabMark} alt="" width={22} height={22} /> WorkLab
           </a>
           <nav className="main-nav" aria-label="Навигация">
-            <a href="#home" aria-current={choosingDifficulty ? undefined : "page"}>Главная</a>
-            <a href={saved ? "#desk" : "#game"} aria-current={choosingDifficulty ? "page" : undefined}>Играть</a>
+            <a href="#home" aria-current={!choosingDifficulty && !choosingGame ? "page" : undefined}>Главная</a>
+            <a href="#game" aria-current={choosingDifficulty || choosingGame ? "page" : undefined}>Играть</a>
           </nav>
         </div>
       </header>
-      {choosingDifficulty ? <DifficultySelection onStart={startDesk} /> : <main className="shell home" id="main" tabIndex={-1}>
+      {choosingGame ? <main className="shell difficulty" id="main" tabIndex={-1}>
+        <h1>Выбери игру</h1>
+        <div className="difficulty-options">
+          <a className="difficulty-option surface" href="#worklab">
+            <span className="difficulty-icon"><Code2 size={24} aria-hidden="true" /></span>
+            <span className="game-option-copy"><strong>Вечер пятницы</strong><small>Ты стажёр по кибербезопасности. Перехватывай данные учебных платежей, расследуй утечки и защищай сервис оплаты перед запуском.</small></span>
+            <ArrowRight size={20} aria-hidden="true" />
+          </a>
+          <div className="surface game-coming-soon"><strong>Вторая игра</strong><span>Скоро</span></div>
+        </div>
+      </main> : choosingDifficulty ? <DifficultySelection onStart={startDesk} /> : <main className="shell home" id="main" tabIndex={-1}>
         <section className="hero">
           <div className="hero-copy">
             <div className="sponsor-badge">
@@ -294,7 +308,7 @@ export function App() {
             <p>Браузерная игра о кибербезопасности. Проведи смену в роли инженера по безопасности приложений.</p>
             <div className="hero-actions">
               {saved ? <>
-                <a className="hero-start" href="#desk" onClick={audio.unlock}><Play size={19} aria-hidden="true" /> <span>Продолжить играть <small>{saved.ticket.id === trainingTicket.id ? "Задача 0 · Обучение" : `${difficulty === "medium" ? "Волна" : "Задача"} ${activeChapter.tickets.indexOf(saved.ticket) + 1}/${activeChapter.tickets.length + activeChapter.upcoming.length}`}</small></span></a>
+                <a className="hero-start" href="#desk" onClick={audio.unlock}><Play size={19} aria-hidden="true" /> <span>Продолжить играть <small>{[trainingTicket.id, practiceTicket.id].includes(saved.ticket.id) ? "Задача 0 · Пробная волна" : `${difficulty === "medium" ? "Волна" : "Задача"} ${activeChapter.tickets.indexOf(saved.ticket) + 1}/${activeChapter.tickets.length + activeChapter.upcoming.length}`}</small></span></a>
                 <a className="hero-restart" href="#game"><RotateCcw size={17} aria-hidden="true" /> Начать заново</a>
               </> : <a className="hero-start" href="#game"><Play size={19} aria-hidden="true" /> Начать играть</a>}
             </div>

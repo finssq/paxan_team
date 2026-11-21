@@ -180,6 +180,11 @@ svg { flex-shrink: 0; }
 }
 .difficulty-nickname input:focus-visible, .difficulty-option:focus-visible { outline: 2px solid var(--level-accent, var(--accent)); outline-offset: 3px; }
 .difficulty-options { display: grid; gap: 12px; }
+.game-coming-soon { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 72px; padding: 12px 20px; color: var(--muted); }
+.game-coming-soon > span { font-size: .85rem; }
+.game-option-copy { display: grid; min-width: 0; gap: 4px; }
+.game-option-copy strong { font-size: 1.2rem; }
+.game-option-copy small { color: var(--muted); font-size: .83rem; line-height: 1.42; }
 .difficulty-option {
   --level-accent: #b9ed88;
   display: grid;

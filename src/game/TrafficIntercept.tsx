@@ -6,8 +6,8 @@ import type { Packet } from "../data/friday"
 
 type FlightPhase = "ready" | "flying" | "frozen" | "finishing" | "arrived"
 
-export function TrafficIntercept({ packets, paused, onCatch, onArrive, onEvidence }: {
-  packets: Packet[]; paused: boolean; onCatch: (packet: Packet) => void; onArrive: () => void; onEvidence: () => void
+export function TrafficIntercept({ packets, paused, guided, onCatch, onArrive, onEvidence }: {
+  packets: Packet[]; paused: boolean; guided?: boolean; onCatch: (packet: Packet) => void; onArrive: () => void; onEvidence: () => void
 }) {
   const copy = friday.traffic
   const reducedMotion = useReducedMotion()
@@ -81,7 +81,7 @@ export function TrafficIntercept({ packets, paused, onCatch, onArrive, onEvidenc
     <section className="traffic-panel" data-flight={phase} aria-label={copy.title}>
       <header className="traffic-heading">
         <h3>{copy.title}</h3>
-        <button className="os-primary os-training-action" type="button" disabled={paused || phase === "frozen" || inFlight} onClick={event => send(event.detail === 0)}>
+        <button className="os-primary os-training-action" type="button" data-next-action={guided && (phase === "ready" || phase === "arrived") || undefined} disabled={paused || phase === "frozen" || inFlight} onClick={event => send(event.detail === 0)}>
           <WalletCards size={17} aria-hidden="true" /> {inFlight ? copy.sending : copy.send}
         </button>
       </header>
@@ -102,7 +102,7 @@ export function TrafficIntercept({ packets, paused, onCatch, onArrive, onEvidenc
               </button>}
             </div>
             <span className="traffic-server" data-arrived={phase === "arrived" || index < channelIndex || undefined} aria-label="Сервер"><Server size={18} aria-hidden="true" /><i /></span>
-            {moving && <button type="button" className="os-secondary traffic-freeze" disabled={paused || phase !== "flying"} onClick={() => freeze(packet)}>
+            {moving && <button type="button" className="os-secondary traffic-freeze" data-next-action={guided && phase === "flying" || undefined} disabled={paused || phase !== "flying"} onClick={() => freeze(packet)}>
               <Snowflake size={15} aria-hidden="true" /> {copy.freeze} <span>· {packet.channel}</span>
             </button>}
             {held && <motion.section className="traffic-inspector" tabIndex={-1} ref={inspector} aria-label={copy.inspector}

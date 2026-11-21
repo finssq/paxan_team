@@ -82,10 +82,8 @@ function TrainingDialog({ titleId, delay = 0, className = "", onDismiss, childre
   return <dialog className={`os-training-dialog ${className}`} ref={dialog} aria-labelledby={titleId} onCancel={onDismiss}>{children}</dialog>
 }
 
-export function TrainingTeam({ onContinue }: { onContinue: () => void }) {
+export function TrainingTeamCards() {
   return (
-    <TrainingDialog titleId="os-training-team-title" className="os-training-team" onDismiss={onContinue}>
-      <h2 id="os-training-team-title">Познакомься с твоей командой</h2>
       <ul className="os-team-list" role="list">
         {trainingTeam.map(member => (
           <li key={member.author}>
@@ -98,6 +96,14 @@ export function TrainingTeam({ onContinue }: { onContinue: () => void }) {
           </li>
         ))}
       </ul>
+  )
+}
+
+export function TrainingTeam({ onContinue }: { onContinue: () => void }) {
+  return (
+    <TrainingDialog titleId="os-training-team-title" className="os-training-team" onDismiss={onContinue}>
+      <h2 id="os-training-team-title">Познакомься с твоей командой</h2>
+      <TrainingTeamCards />
       <p className="os-team-intro"><HighlightedText text="Ты **стажёр по безопасности**. Проверь обновление Дениса перед выпуском." /></p>
       <button type="button" className="os-primary os-training-action" onClick={onContinue}>Открыть чат <ArrowRight size={20} aria-hidden="true" /></button>
     </TrainingDialog>

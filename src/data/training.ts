@@ -25,8 +25,8 @@ export const trainingHints = {
 }
 
 export const trainingTeam = [
-  { author: "developer", mood: "smile", role: "Разработчик-вайбкодер", description: "Собирает фичи с помощью нейросети и хочет успеть с релизом к вечернему демо." },
-  { author: "mentor", mood: "calm", role: "Наставник по безопасности", description: "Познакомит тебя с инструментами и поможет разобраться, почему обновление может быть опасным." },
+  { author: "developer", mood: "smile", role: "Разработчик", description: "Собрал обновление оплаты с помощью нейросети и хочет показать его на вечернем стриме." },
+  { author: "mentor", mood: "calm", role: "Наставник по безопасности", description: "Научит проверять, что происходит с данными покупателей, и поможет разобраться в инструментах." },
 ] as const
 
 function mentor(text: string): Message {

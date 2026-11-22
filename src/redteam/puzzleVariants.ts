@@ -1,23 +1,27 @@
+import { analysisScenarios } from "../data/redTeamPuzzles"
+import { shuffleArray } from "../shuffleArray"
+import type { Difficulty } from "./difficulty"
 import type { PuzzleKind } from "./mapData"
 
 type Scenario = { id: string; title: string; rule: string; takeaway: string }
 type ScenarioPosition = { number: number; total: number }
 
-export type NetworkCard = {
+type BadgeCard = {
   source: string
-  name: string
   status: string
   tone: "secure" | "amber" | "coral" | "closed"
-  error?: string
 }
 
+export type NetworkCard = { name: string; error?: string } & (BadgeCard | { lines: readonly string[] })
 export type FileExtension = "ENV" | "KEY" | "PNG" | "JPG" | "SVG" | "TXT" | "PDF" | "CSV" | "ZIP"
 type FileCard = { name: string; size: string; extension: FileExtension | null; error?: string }
 type MailCard = { sender: string; subject: string; preview: string; error?: string }
+type InspectFile = { name: string; lines: readonly string[]; error?: string; trap?: true }
 
 type NetworkVariant = Scenario & { kind: "sniffer"; cards: readonly NetworkCard[] }
 type LaptopVariant = Scenario & { kind: "laptop"; windowTitle: string } & (
   { mode: "files"; files: readonly FileCard[] } | { mode: "mail"; mail: readonly MailCard[] }
+  | { mode: "inspector"; files: readonly InspectFile[] }
 )
 type OsintVariant = Scenario & {
   kind: "osint"
@@ -26,12 +30,16 @@ type OsintVariant = Scenario & {
   pictogram: "cat" | "dog" | "cup" | "car"
   role: string
   note: string
-  answer: readonly [string, string, string]
+  answer: readonly [string, string, string] | readonly [string, string, string, string]
   chips: readonly string[]
+  policy?: string
+  decoder?: string
 }
 
 export type PuzzleVariant = (NetworkVariant | LaptopVariant | OsintVariant) & ScenarioPosition
 export type PuzzleVariants = { [Kind in PuzzleKind]: Extract<PuzzleVariant, { kind: Kind }> }
+export type PuzzleSet = { difficulty: Difficulty; variants: PuzzleVariants }
+export type ScenarioPools = { sniffer: readonly NetworkVariant[]; laptop: readonly LaptopVariant[]; osint: readonly OsintVariant[] }
 
 const guestError = "Это устройство гостя, а не сеть офиса!"
 const httpsError = "Зашифровано по HTTPS — перехватить нельзя!"
@@ -172,19 +180,42 @@ const osintVariants: readonly OsintVariant[] = [
   },
 ]
 
-const lastVariant: Partial<Record<PuzzleKind, string>> = {}
+type Bag = { last: string; remaining: string[] }
+const bags = new Map<string, Bag>()
+const basicScenarios: ScenarioPools = { sniffer: networkVariants, laptop: laptopVariants, osint: osintVariants }
 
-function chooseVariant<T extends Scenario>(kind: PuzzleKind, pool: readonly T[]): T & ScenarioPosition {
-  const candidates = pool.filter(variant => variant.id !== lastVariant[kind])
-  const chosen = candidates[Math.floor(Math.random() * candidates.length)]!
-  lastVariant[kind] = chosen.id
+function readBag(key: string, ids: readonly string[]): Bag | undefined {
+  try {
+    const saved = JSON.parse(localStorage.getItem(key) ?? "null")
+    if (ids.includes(saved?.last) && Array.isArray(saved.remaining) &&
+      new Set(saved.remaining).size === saved.remaining.length &&
+      saved.remaining.every((id: string) => ids.includes(id) && id !== saved.last)) return saved
+  } catch {}
+  return bags.get(key)
+}
+
+function chooseVariant<T extends Scenario>(difficulty: Difficulty, kind: PuzzleKind, pool: readonly T[]): T & ScenarioPosition {
+  const key = `worklab.redteam.puzzles.v1.${difficulty}.${kind}`
+  const ids = pool.map(variant => variant.id)
+  const bag = readBag(key, ids)
+  const remaining = bag?.remaining.length ? [...bag.remaining] : shuffleArray(ids)
+  if (!bag?.remaining.length && remaining.length > 1 && remaining[0] === bag?.last) remaining.push(remaining.shift()!)
+  const last = remaining.shift()!
+  const next = { last, remaining }
+  bags.set(key, next)
+  try { localStorage.setItem(key, JSON.stringify(next)) } catch {}
+  const chosen = pool.find(variant => variant.id === last)!
   return { ...chosen, number: pool.indexOf(chosen) + 1, total: pool.length }
 }
 
-export function nextPuzzleVariants(): PuzzleVariants {
+export function drawNextVariantSet(difficulty: Difficulty): PuzzleSet {
+  const pool = difficulty === "intern" ? basicScenarios : analysisScenarios[difficulty]
   return {
-    sniffer: chooseVariant("sniffer", networkVariants),
-    laptop: chooseVariant("laptop", laptopVariants),
-    osint: chooseVariant("osint", osintVariants),
+    difficulty,
+    variants: {
+      sniffer: chooseVariant(difficulty, "sniffer", pool.sniffer),
+      laptop: chooseVariant(difficulty, "laptop", pool.laptop),
+      osint: chooseVariant(difficulty, "osint", pool.osint),
+    },
   }
 }

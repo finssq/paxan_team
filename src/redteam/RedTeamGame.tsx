@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Check, Crosshair, Flame, Home, MessageCircle, RotateCcw, ScanLine, ShieldCheck, Smartphone, Terminal, Volume2, VolumeX, Zap } from "lucide-react"
+import { ArrowLeft, ArrowRight, Check, Crosshair, Flame, Home, MessageCircle, RotateCcw, ScanLine, ShieldCheck, Smartphone, Volume2, VolumeX, Zap } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent } from "react"
 import type { createSfx } from "../audio/sfx"
@@ -6,12 +6,16 @@ import { buildCyberProfile } from "../data/cyberProfile"
 import { readSoundPreference, saveSoundPreference } from "../game/feedback"
 import AgentPhone, { MessagePush, senders, sidePanelQuery, useOfficeMessages } from "./AgentPhone"
 import HackPuzzleModal from "./HackPuzzleModal"
+import { BrandLogo } from "../components/BrandLogo"
+import { PlayerNicknameField } from "../components/PlayerNicknameField"
+import { getPlayerNickname, setPlayerNickname } from "../utils/playerProfile"
+import { honeytokenAlert } from "../data/redTeamPuzzles"
 import { difficulties, difficultyOrder, resultFor } from "./difficulty"
 import type { Difficulty, Rank } from "./difficulty"
 import { findings, mapSize, pickups } from "./mapData"
 import type { Point } from "./mapData"
-import { nextPuzzleVariants } from "./puzzleVariants"
-import type { PuzzleVariants } from "./puzzleVariants"
+import { drawNextVariantSet } from "./puzzleVariants"
+import type { PuzzleSet } from "./puzzleVariants"
 import { createRenderer } from "./render"
 import { closeHack, createRun, failHack, finishHack, fireEmp, openHack, stepRun } from "./simulation"
 import type { Phase, Run } from "./simulation"
@@ -28,10 +32,10 @@ const portraitQuery = "(max-width: 899px) and (orientation: portrait)"
 const touchQuery = "(pointer: coarse), (max-width: 619px), (orientation: landscape) and (max-height: 540px)"
 const portraitKey = "worklab.redteam.portrait"
 const difficultyStyles = {
-  intern: { Icon: ShieldCheck, accent: "[--difficulty-accent:#8EE872]" },
-  agent: { Icon: Crosshair, accent: "[--difficulty-accent:#F59E0B]" },
-  ghost: { Icon: Flame, accent: "[--difficulty-accent:#EF4444]" },
-} satisfies Record<Difficulty, { Icon: typeof ShieldCheck; accent: string }>
+  intern: { Icon: ShieldCheck, accent: "[--difficulty-accent:#8EE872]", description: "Базовые взломы · Спокойная охрана" },
+  agent: { Icon: Crosshair, accent: "[--difficulty-accent:#F59E0B]", description: "Анализ трафика и файлов · Стандарт" },
+  ghost: { Icon: Flame, accent: "[--difficulty-accent:#EF4444]", description: "Ловушки СБ и дешифровка · Быстрая охрана" },
+} satisfies Record<Difficulty, { Icon: typeof ShieldCheck; accent: string; description: string }>
 const rankPresentation = {
   S: { title: "Идеальный призрак", color: "[--rank-color:#F9DF89] [--rank-glow:#8EE872]", surface: "bg-linear-to-br from-[#453517] to-[#213821] text-[#F9DF89]" },
   A: { title: "Оперативник Red Team", color: "[--rank-color:#8EE872] [--rank-glow:#8EE872]", surface: "bg-[#223821] text-[#8EE872]" },
@@ -85,7 +89,7 @@ function DifficultyPicker({ value, onChange, compact = false }: {
         {compact && <span aria-hidden="true" className="text-xs font-semibold text-[#CFDCD0]">{legend}</span>}
         <div className={compact ? "inline-grid grid-cols-3 gap-0.5 rounded-xl border border-white/10 bg-[#151D18] p-0.5" : "grid grid-cols-1 gap-3 sm:grid-cols-3"}>
           {difficultyOrder.map(id => {
-            const { Icon, accent } = difficultyStyles[id]
+            const { Icon, accent, description } = difficultyStyles[id]
             const level = difficulties[id]
             return (
               <label className={`relative min-w-0 cursor-pointer ${accent}`} key={id}>
@@ -108,8 +112,7 @@ function DifficultyPicker({ value, onChange, compact = false }: {
                       </span>
                     </span>
                     <span id={`rt-difficulty-details-${id}`} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-tight text-[#CFDCD0]">
-                      <span className="sm:w-full">{level.description}</span>
-                      <span className="rounded-md bg-black/25 px-1.5 py-1 font-bold">{level.charges} EMP</span>
+                      <span className="sm:w-full">{description} · {level.charges} EMP</span>
                       <span className="rounded-md bg-black/25 px-1.5 py-1 font-bold">Очки ×{formatMultiplier(level.score)}</span>
                     </span>
                   </span>
@@ -173,8 +176,9 @@ function AnimatedScore({ score }: { score: number }) {
   )
 }
 
-function OperationResult({ hud, puzzleErrors, difficulty, onDifficulty, onRestart, hidden }: {
+function OperationResult({ hud, playerNickname, puzzleErrors, difficulty, onDifficulty, onRestart, hidden }: {
   hud: ReturnType<typeof snapshot>
+  playerNickname: string
   puzzleErrors: number
   difficulty: Difficulty
   onDifficulty: (value: Difficulty) => void
@@ -275,7 +279,7 @@ function OperationResult({ hud, puzzleErrors, difficulty, onDifficulty, onRestar
           </div>
           <section className="rt-cyber-profile grid gap-2.5 rounded-2xl border border-[#8EE872]/20 bg-[#121915] p-3.5" aria-labelledby="rt-profile-title">
             <header>
-              <h3 id="rt-profile-title" className="text-xs font-extrabold text-[#8EE872]">Анализ склонностей к кибербезопасности</h3>
+              <h3 id="rt-profile-title" className="wrap-anywhere text-xs font-extrabold text-[#8EE872]">Профиль агента: {playerNickname}</h3>
               <p className="mt-1 text-base leading-tight font-extrabold text-white sm:text-lg">{profile.verdict}</p>
             </header>
             <p className="text-xs leading-snug text-[#D7E2D9] sm:text-sm">{profile.strength} {profile.advice}</p>
@@ -332,15 +336,20 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
   const rotateActive = useRef(false)
   const rotateButton = useRef<HTMLButtonElement>(null)
   const selectedDifficulty = useRef(difficulty)
+  const preparedPuzzles = useRef<PuzzleSet | null>(null)
   const recordedRun = useRef<Run | null>(null)
   const puzzleErrors = useRef(0)
+  const [nicknameDraft, setNicknameDraft] = useState(getPlayerNickname)
+  const playerNickname = nicknameDraft.trim() || "Агент"
+  const nicknameOnCanvas = useRef(playerNickname)
   const [hud, setHud] = useState(() => snapshot(createRun()))
-  const [variants, setVariants] = useState<PuzzleVariants | null>(null)
+  const [puzzles, setPuzzles] = useState<PuzzleSet | null>(null)
   const [sound, setSound] = useState(readSoundPreference)
   const [knob, setKnob] = useState(neutral)
   const [phoneOpen, setPhoneOpen] = useState(false)
   const [seen, setSeen] = useState(0)
   const [attempt, setAttempt] = useState(0)
+  const [caughtByTrap, setCaughtByTrap] = useState(false)
   const [portrait, setPortrait] = useState(() => window.matchMedia(portraitQuery).matches)
   const [portraitSkipped, setPortraitSkipped] = useState(readPortraitPreference)
   const [dismissedPush, setDismissedPush] = useState("")
@@ -358,15 +367,26 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
   function begin() {
     clearInputs()
     puzzleErrors.current = 0
-    run.current = createRun("playing", selectedDifficulty.current)
-    setVariants(nextPuzzleVariants())
+    setCaughtByTrap(false)
+    const next = preparedPuzzles.current ?? drawNextVariantSet(selectedDifficulty.current)
+    preparedPuzzles.current = null
+    run.current = createRun("playing", next.difficulty)
+    setPuzzles(next)
     setSeen(0)
     setAttempt(value => value + 1)
     setHud(snapshot(run.current))
   }
 
+  function startOperation() {
+    setPlayerNickname(nicknameDraft)
+    nicknameOnCanvas.current = playerNickname
+    begin()
+  }
+
   function changeDifficulty(next: Difficulty) {
+    if (next === selectedDifficulty.current) return
     selectedDifficulty.current = next
+    preparedPuzzles.current = drawNextVariantSet(next)
     onDifficulty(next)
   }
 
@@ -386,10 +406,11 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
     setHud(snapshot(run.current))
   }
 
-  function handleHackFailure(penalty: number) {
+  function handleHackFailure(penalty: number, trap?: boolean) {
     if (!run.current) return
     puzzleErrors.current++
     failHack(run.current, penalty, audio.play)
+    if (trap && run.current.phase === "caught") setCaughtByTrap(true)
     setHud(snapshot(run.current))
   }
 
@@ -556,7 +577,7 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
         lastPhase = current.phase
         lastHud = now
       }
-      const target = paint(current, desktop.matches ? mapSize.width : displayWidth, touchControls.matches)
+      const target = paint(current, desktop.matches ? mapSize.width : displayWidth, touchControls.matches, nicknameOnCanvas.current)
       if (target && mapAction.current) {
         mapAction.current.style.left = `${canvasLeft + target.x * displayWidth}px`
         mapAction.current.style.top = `${canvasTop + target.y * displayHeight}px`
@@ -646,9 +667,8 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
     <main className="rt-page" aria-label="Проникновение в офис">
       <div className="rt-shell" inert={rotateRequired || briefing || completed}>
         <header className="rt-header" inert={hacking}>
-          <a className="rt-brand shrink-0 cursor-pointer transition-opacity hover:opacity-85" href="#home" title="На главную" aria-label="WorkLab — на главную">
-            <Terminal size={20} aria-hidden="true" />
-            <span className="max-[380px]:hidden">Work<span>Lab</span></span>
+          <a className="inline-flex shrink-0 cursor-pointer transition-opacity hover:opacity-85" href="#home" title="На главную" aria-label="WorkLab — на главную">
+            <BrandLogo />
           </a>
           <div className="rt-mission min-w-0 wrap-anywhere">
             <span>Red Team · Белый хакер</span>
@@ -715,16 +735,18 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
               <div><strong>{toast.label}</strong><p>{toast.detail}{hud.count === findings.length && " Шлюз в серверную открыт."}</p></div>
             </div>
           )}
-          {hacking && target && variants && (
-            <HackPuzzleModal variant={variants[target.puzzle]} label={target.short} alert={hud.alert} play={audio.play} paused={rotateRequired || hidden}
+          {hacking && target && puzzles && (
+            <HackPuzzleModal key={`${attempt}:${puzzles.difficulty}:${puzzles.variants[target.puzzle].id}`}
+              variant={puzzles.variants[target.puzzle]} difficulty={puzzles.difficulty} label={target.short} alert={hud.alert} play={audio.play} paused={rotateRequired || hidden}
               onCancel={leaveHack} onSuccess={handleHackSuccess} onFailure={handleHackFailure} />
           )}
           {hud.phase === "caught" && (
             <div className="rt-overlay" data-phase={hud.phase}>
+              {caughtByTrap && <div className="pointer-events-none absolute inset-0 motion-safe:animate-[rt-canary-flash_.48s_ease-out]" aria-hidden="true" />}
               <section className="rt-dialog" role="dialog" aria-labelledby="rt-dialog-title">
                 <div className="rt-dialog-label"><Crosshair size={16} aria-hidden="true" /> Тревога 100%</div>
                 <h2 id="rt-dialog-title">Агент обнаружен</h2>
-                <p>Используй стены как укрытия или отключай охрану с помощью EMP.</p>
+                <p>{caughtByTrap ? honeytokenAlert : "Используй стены как укрытия или отключай охрану с помощью EMP."}</p>
                 <div className="mt-3"><DifficultyPicker value={difficulty} onChange={changeDifficulty} compact /></div>
                 <div className="rt-dialog-actions">
                   <button className="rt-button rt-primary" ref={primary} type="button" onClick={begin}>Начать заново <kbd>R</kbd></button>
@@ -773,23 +795,27 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
         <div className={missionOverlay}>
           <section className={missionDialog} role="dialog" aria-modal="true" aria-labelledby="rt-briefing-title">
             <div className="h-1.5 bg-linear-to-r from-[#8EE872] to-emerald-400" aria-hidden="true" />
-            <div className="grid gap-4 p-3.5 sm:p-5 [@media(max-height:430px)]:gap-2.5 [@media(max-height:430px)]:p-3">
+            <form className="grid gap-3 p-3.5 sm:p-5 [@media(max-height:430px)]:gap-2.5 [@media(max-height:430px)]:p-3" onSubmit={event => {
+              event.preventDefault()
+              startOperation()
+            }}>
               <header>
                 <div className="text-[11px] font-extrabold tracking-wider text-[#8EE872]">ГЛАВА 2 · ПОНЕДЕЛЬНИК, 09:30</div>
                 <h2 id="rt-briefing-title" className="mt-1 text-xl leading-tight font-extrabold sm:text-2xl">Проникновение в офис</h2>
                 <p className="mt-2 text-sm leading-snug text-[#CFDCD0] [@media(max-height:430px)]:mt-1 [@media(max-height:430px)]:text-xs">Пятничный релиз спасён. Теперь выясни, как «Призрак» узнал внутренние адреса банка. Начни с гостевого Wi-Fi и проверь журнал Ядра.</p>
               </header>
+              <PlayerNicknameField hint="Виден над персонажем" placeholder="Например, Ghost_01" value={nicknameDraft} onChange={setNicknameDraft} />
               <DifficultyPicker value={difficulty} onChange={changeDifficulty} />
               <div className="flex items-center justify-between gap-3 border-t border-white/[0.08] pt-4 [@media(max-height:430px)]:pt-2">
                 <a className={`${missionBack} px-2 sm:px-3`} href="#game"><ArrowLeft size={15} className="shrink-0" aria-hidden="true" /> К выбору игр</a>
-                <button className={`${missionPrimary} sm:px-5`} ref={primary} type="button" onClick={begin}>Начать операцию →</button>
+                <button className={`${missionPrimary} sm:px-5`} ref={primary} type="submit">Начать операцию →</button>
               </div>
-            </div>
+            </form>
           </section>
         </div>
       )}
       {completed && (
-        <OperationResult hud={hud} puzzleErrors={puzzleErrors.current} difficulty={difficulty} onDifficulty={changeDifficulty} onRestart={begin} hidden={rotateRequired} />
+        <OperationResult hud={hud} playerNickname={playerNickname} puzzleErrors={puzzleErrors.current} difficulty={difficulty} onDifficulty={changeDifficulty} onRestart={begin} hidden={rotateRequired} />
       )}
       {rotateRequired && (
         <div className="rt-rotate" role="dialog" aria-modal="true" aria-labelledby="rt-rotate-title">

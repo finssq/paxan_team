@@ -1,14 +1,15 @@
 import { ArrowRight, CircleAlert, CircleCheck, Code2, Gamepad2, Map, Smartphone, UserRound } from "lucide-react"
-import { lazy, Suspense, useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import type { ComponentProps, CSSProperties } from "react"
 import { createSfx } from "./audio/sfx"
 import { clearCampaign, emptyCampaign, readCampaign, recordRedWin, writeCampaign } from "./campaignProgress"
 import type { CampaignProgress } from "./campaignProgress"
+import { BrandLogo } from "./components/BrandLogo"
 import MissionHub from "./components/MissionHub"
 import sponsorLogo from "./centr-invest.svg"
 import { chapter, paymentPreview } from "./data/paymentPreview"
 import { fridayChapter, incidentTicket, practiceTicket } from "./data/friday"
 import { trainingTicket } from "./data/training"
-import workLabMark from "./favicon.svg"
 import { clearShift, initialReview, readShift, saveShift } from "./game/review"
 import { readFeedback, readSoundPreference } from "./game/feedback"
 import type { Feedback } from "./game/feedback"
@@ -18,7 +19,27 @@ import type { Ticket } from "./types/game"
 import { Card, CodeSource } from "./ui"
 
 const bootDuration = 1400
-const RedTeamGame = lazy(() => import("./redteam/RedTeamGame"))
+const bootFade = 180
+
+function BootScreen({ label, caption, error, fading = false }: {
+  label: string; caption?: boolean; error?: string; fading?: boolean
+}) {
+  return (
+    <main className={`boot-screen ${caption ? "motion-safe:transition-opacity motion-safe:duration-[180ms]" : ""} ${fading ? "opacity-0" : ""}`}>
+      <BrandLogo />
+      {error ? (
+        <div className="boot-recovery">
+          <p role="alert">{error}</p>
+          <button type="button" onClick={() => window.location.reload()}>Повторить</button>
+        </div>
+      ) : (
+        <div className="boot-progress" role="progressbar" aria-label={label}
+          style={caption ? { "--meter-fill": "#8EE872" } as CSSProperties : undefined} />
+      )}
+      {caption && !error && <p className="text-center text-sm font-semibold text-[#B9C8BB]" role="status">{label}</p>}
+    </main>
+  )
+}
 
 function readCurrentShift() {
   const saved = readShift(fridayChapter, practiceTicket, ["friday-profile", "friday-transfer", "friday-traffic"])
@@ -76,19 +97,39 @@ function DeskStartup({ audio, onComplete }: { audio: ReturnType<typeof createSfx
     }} />
   }
 
-  return (
-    <main className="boot-screen">
-      <img className="boot-logo" src={workLabMark} width={60} height={60} alt="WorkLab" />
-      {Desk === "failed" ? (
-        <div className="boot-recovery">
-          <p role="alert">Не удалось запустить WorkOS.</p>
-          <button type="button" onClick={() => window.location.reload()}>Повторить</button>
-        </div>
-      ) : (
-        <div className="boot-progress" role="progressbar" aria-label="Запуск WorkOS" />
-      )}
-    </main>
-  )
+  return <BootScreen label="Запуск WorkOS" error={Desk === "failed" ? "Не удалось запустить WorkOS." : undefined} />
+}
+
+function RedTeamStartup(props: ComponentProps<typeof import("./redteam/RedTeamGame").default>) {
+  const [Game, setGame] = useState<typeof import("./redteam/RedTeamGame").default>()
+  const [status, setStatus] = useState<"loading" | "fading" | "failed">("loading")
+
+  useEffect(() => {
+    const startedAt = performance.now()
+    let active = true
+    let timer: number | undefined
+    void import("./redteam/RedTeamGame").then(({ default: RedTeamGame }) => {
+      if (!active) return
+      timer = window.setTimeout(() => {
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          setGame(() => RedTeamGame)
+          return
+        }
+        setStatus("fading")
+        timer = window.setTimeout(() => setGame(() => RedTeamGame), bootFade)
+      }, Math.max(0, bootDuration - (performance.now() - startedAt)))
+    }, () => {
+      if (active) setStatus("failed")
+    })
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [])
+
+  if (Game) return <Game {...props} />
+  return <BootScreen label="Загрузка операции · Red Team" caption fading={status === "fading"}
+    error={status === "failed" ? "Не удалось загрузить операцию." : undefined} />
 }
 
 function CodePreview() {
@@ -286,9 +327,7 @@ export function App() {
 
   if (route === "desk") return <DeskStartup audio={audio} onComplete={completeBlueChapter} />
   if (route === "redteam") {
-    return <Suspense fallback={<main className="boot-screen" role="status">Загружаем офис…</main>}>
-      <RedTeamGame audio={audio} difficulty={campaign.red.difficulty} onDifficulty={selectDifficulty} onComplete={completeRedChapter} />
-    </Suspense>
+    return <RedTeamStartup audio={audio} difficulty={campaign.red.difficulty} onDifficulty={selectDifficulty} onComplete={completeRedChapter} />
   }
 
   const choosingGame = route === "modules"
@@ -299,7 +338,7 @@ export function App() {
       <header className="site-header">
         <div className="shell header-inner">
           <a className="header-brand" href="./" aria-label="WorkLab — главная">
-            <img src={workLabMark} alt="" width={22} height={22} /> WorkLab
+            <BrandLogo />
           </a>
           <nav className="main-nav" aria-label="Навигация">
             <a href="#home" aria-current={!choosingGame ? "page" : undefined}>Главная</a>
@@ -333,7 +372,7 @@ export function App() {
       </main>}
       <footer className="site-footer">
         <div className="shell footer-inner">
-          <span className="footer-brand">WorkLab <span aria-hidden="true">•</span> пахан team</span>
+          <span className="footer-brand inline-flex items-center gap-2"><BrandLogo /><span className="text-[#8EE872]" aria-hidden="true">•</span> пахан team</span>
           <span>Cyber Garden School <span aria-hidden="true">•</span> 2026</span>
         </div>
       </footer>

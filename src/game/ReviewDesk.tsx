@@ -3,6 +3,7 @@ import { animate, AnimatePresence, motion, MotionConfig, useReducedMotion } from
 import { useCallback, useEffect, useReducer, useRef, useState } from "react"
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react"
 import type { createSfx } from "../audio/sfx"
+import { BrandLogo } from "../components/BrandLogo"
 import { trainingChat, trainingKey, trainingLeakExplanation } from "../data/training"
 import { friday, fridayChapter, getWaveScenario, practiceTicket, practiceTips } from "../data/friday"
 import { releaseEpilogue, storyCopy, storyForWave } from "../data/story"
@@ -10,6 +11,7 @@ import type { Packet } from "../data/friday"
 import type { Chapter, CheckResult, Ticket } from "../types/game"
 import { CodeSource } from "../ui"
 import { shuffleArray } from "../shuffleArray"
+import { getPlayerNickname, setPlayerNickname } from "../utils/playerProfile"
 import { initialReview, review, saveShift } from "./review"
 import type { readShift, ReviewAction, ReviewState, ReviewStep } from "./review"
 import { achievements, characters, mentorGreeting, reactions, readFeedback, readSoundPreference, recordFeedback, saveSoundPreference } from "./feedback"
@@ -274,6 +276,8 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
   const packets = scenario?.packets ?? []
   const fridayMission = Boolean(scenario)
   const [lastPracticeTip, setLastPracticeTip] = useState(-1)
+  const [nicknameDraft, setNicknameDraft] = useState(getPlayerNickname)
+  const playerNickname = nicknameDraft.trim() || "Стажёр"
   const reducedMotion = useReducedMotion()
   const [state, dispatch] = useReducer((current: ReviewState, action: ReviewAction) => review(ticket, current, action), saved?.state ?? initialReview)
   const [patchOptions, setPatchOptions] = useState(() => shuffleArray(ticket.patches))
@@ -348,6 +352,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
   const ticketCount = chapter.tickets.length
   const ticketIndex = chapter.tickets.indexOf(ticket)
   const waveNumber = ticketIndex + 1
+  const showNickname = (wavePhase === "ready" && (practice || waveNumber === 1)) || (wavePhase === "won" && practice)
   const nextTicket = chapter.tickets[waveNumber]
   const storyEnabled = !training && !practice && chapter === fridayChapter && waveNumber > 0
   const scene = storyForWave(waveNumber)
@@ -848,6 +853,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
   }
 
   function advanceWave() {
+    if (showNickname) setPlayerNickname(nicknameDraft)
     if (wavePhase === "won") {
       if (practice || !nextTicket) {
         beginShift()
@@ -908,6 +914,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
   }
 
   function skipPractice() {
+    if (showNickname) setPlayerNickname(nicknameDraft)
     const current = feedbackRef.current
     if (current.sound) audio.play("uiClick")
     onStartShift({ ...current, tutorialDismissed: true }, true)
@@ -981,10 +988,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
         <a className="skip-link" href="#desk">К рабочему столу</a>
         <header className="os-menu">
           <a className="os-home" href="#game" aria-label="WorkLab — к выбору миссий" title="Миссии">
-            <svg width={18} height={18} viewBox="0 0 24 24" aria-hidden="true">
-              <path fill="currentColor" d="M5 1h12l6 6v12a4 4 0 0 1-4 4H7l-6-6V5a4 4 0 0 1 4-4Z" />
-              <path d="m6 8 4 4-4 4m7 0h5" fill="none" stroke="var(--os-dark)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />
-            </svg><span>WorkLab</span>
+            <BrandLogo />
           </a>
           {storyBadge ? <div className="os-quest os-story-stage">
             <strong>{chapter.title}</strong><span data-tone={storyBadge.tone}>{practice ? "Пробная волна" : storyBadge.label}</span>
@@ -1215,7 +1219,7 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
                   {message.author !== "player" && <Portrait message={message} />}
                   <div>
                     <div className="os-message-meta">
-                      <strong>{message.author === "player" ? storyCopy.player : characters[message.author].name}</strong>
+                      <strong className="wrap-anywhere">{message.author === "player" ? playerNickname : characters[message.author].name}</strong>
                       {message.author !== "player" && <span className="os-message-role">{characters[message.author].role}</span>}
                       <time dateTime={message.sentAt.toISOString()}>{clockFormat.format(message.sentAt)}</time>
                     </div>
@@ -1243,7 +1247,8 @@ export default function ReviewDesk({ chapter, ticket, saved, audio, training, on
         {training && released && <TrainingComplete onStart={beginShift} />}
         {scenario && wavePhase !== "live" && (!finalReport || endingMessages.length === epilogue.length) &&
           <FridayBrief key={wavePhase} phase={wavePhase} run={wave} waveNumber={waveNumber} waveCount={ticketCount} practice={practice} scenario={scenario}
-          finalReport={finalReport} epilogue={epilogue}
+          finalReport={finalReport} epilogue={epilogue} playerNickname={playerNickname}
+          nickname={showNickname ? { value: nicknameDraft, onChange: setNicknameDraft } : undefined}
           onAction={advanceWave} onReset={beginShift} onSkip={practice && wavePhase === "ready" ? skipPractice : undefined} />}
         {practiceTip && <PracticeDialog key={tipIndex} {...practiceTip} action="Попробовать" onAction={() => setLastPracticeTip(tipIndex)} onSkip={skipPractice} />}
         {fridayMission && wave.freezeMs > 0 && wavePhase === "live" && <div className="os-frost" aria-hidden="true">

@@ -8,6 +8,16 @@ const graphite = "#070B09"
 const lime = "#8EE872"
 const coral = "#EF4444"
 const amber = "#F59E0B"
+const rim = "rgba(255,255,255,0.12)"
+const targetLights = { sniffer: "#8EE87236", laptop: "#F59E0B3A", osint: "#FDE04732" } satisfies Record<PuzzleKind, string>
+const roomLights = {
+  "РЕСЕПШЕН": { floor: "#F59E0B08", light: "rgba(245,158,11,0.06)", mark: amber },
+  "ОФИС": { floor: "#0D120F62", light: "#F59E0B0C", mark: "#C6AD79" },
+  "IT-ЗОНА": { floor: "#34D39906", light: "rgba(52,211,153,0.055)", mark: "#34D399" },
+  "СЕРВЕРНАЯ": { floor: "rgba(4,8,6,0.45)", light: "#34D3990A", mark: lime },
+}
+
+type RoomLabel = keyof typeof roomLights
 
 function rounded(ctx: Canvas, x: number, y: number, width: number, height: number, radius: number, color: string) {
   ctx.beginPath()
@@ -31,6 +41,96 @@ function glow(ctx: Canvas, x: number, y: number, radius: number, inner: string) 
   ctx.arc(x, y, radius, 0, fullTurn)
   ctx.fillStyle = light
   ctx.fill()
+}
+
+export function paintRoomFloor(ctx: Canvas, { x, y, w, h }: Rect, label: string, entrance?: Point) {
+  const { floor, light } = roomLights[label as RoomLabel] ?? roomLights["ОФИС"]
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(x, y, w, h)
+  ctx.clip()
+  ctx.fillStyle = floor
+  ctx.fillRect(x, y, w, h)
+  glow(ctx, x + w * .48, y + h * .54, Math.max(w, h) * .68, light)
+  if (entrance) {
+    const matX = entrance.x - 24
+    const matY = entrance.y - 15
+    glow(ctx, entrance.x, entrance.y, 84, "rgba(245,158,11,0.06)")
+    rounded(ctx, matX, matY + 3, 72, 30, 3, "#070B09BF")
+    rounded(ctx, matX, matY, 72, 30, 3, "#F59E0B1C")
+    ctx.strokeStyle = "#F59E0B39"
+    ctx.lineWidth = 1
+    ctx.stroke()
+    ctx.strokeRect(matX + 4, matY + 4, 64, 22)
+  }
+  ctx.restore()
+}
+
+export function paintRoomLabel(ctx: Canvas, x: number, y: number, label: string) {
+  ctx.save()
+  ctx.font = "bold 14px ui-monospace, Consolas, monospace"
+  ctx.textAlign = "left"
+  ctx.textBaseline = "alphabetic"
+  disk(ctx, x + 2, y - 5, 2, (roomLights[label as RoomLabel] ?? roomLights["ОФИС"]).mark)
+  ctx.lineWidth = 3
+  ctx.strokeStyle = "#070B09CD"
+  ctx.strokeText(label, x + 10, y)
+  ctx.fillStyle = "#B4C6B8"
+  ctx.fillText(label, x + 10, y)
+  ctx.restore()
+}
+
+export function paintVignette(ctx: Canvas) {
+  const { width, height } = ctx.canvas
+  ctx.save()
+  ctx.setTransform(1, 0, 0, 1, 0, 0)
+  ctx.translate(width / 2, height / 2)
+  ctx.scale(width / 2, height / 2)
+  const shade = ctx.createRadialGradient(0, 0, .52, 0, 0, Math.SQRT2)
+  shade.addColorStop(0, "rgba(0,0,0,0)")
+  shade.addColorStop(.65, "rgba(0,0,0,0.10)")
+  shade.addColorStop(1, "rgba(0,0,0,0.28)")
+  ctx.fillStyle = shade
+  ctx.fillRect(-1, -1, 2, 2)
+  ctx.restore()
+}
+
+export function paintDataCable(ctx: Canvas, points: readonly [Point, ...Point[]], found: boolean, clock: number, offset: number) {
+  const [start, ...bends] = points
+  ctx.save()
+  ctx.lineJoin = "round"
+  ctx.lineCap = "round"
+  ctx.beginPath()
+  ctx.moveTo(start.x, start.y)
+  for (const point of bends) ctx.lineTo(point.x, point.y)
+  ctx.strokeStyle = "#070B09B3"
+  ctx.lineWidth = 5
+  ctx.stroke()
+  ctx.strokeStyle = found ? "rgba(142,232,114,0.55)" : "rgba(245,158,11,0.22)"
+  ctx.lineWidth = 1.6
+  ctx.stroke()
+
+  const phase = (clock + offset) % 3.6 / 2.6
+  if (found && phase < 1) {
+    const lengths = bends.map((point, index) => {
+      const from = points[index]!
+      return Math.hypot(point.x - from.x, point.y - from.y)
+    })
+    let distance = phase * lengths.reduce((sum, length) => sum + length, 0)
+    for (const [index, length] of lengths.entries()) {
+      if (length > 0 && distance <= length) {
+        const from = points[index]!
+        const to = bends[index]!
+        const x = from.x + (to.x - from.x) * distance / length
+        const y = from.y + (to.y - from.y) * distance / length
+        glow(ctx, x, y, 10, "#8EE8729E")
+        disk(ctx, x, y, 2, lime)
+        break
+      }
+      distance -= length
+    }
+  }
+  ctx.restore()
 }
 
 type Footprint = Point & { angle: number; at: number }
@@ -131,6 +231,26 @@ export function createAgentDrawing() {
       ctx.fillRect(6.2, -2.1, 1, 4.2)
       ctx.restore()
     },
+    paintLamp(ctx: Canvas, { x, y }: Point) {
+      const reach = 85
+      ctx.save()
+      ctx.translate(x, y)
+      ctx.rotate(facingAngle)
+      const light = ctx.createRadialGradient(5, 0, 3, 5, 0, reach - 5)
+      light.addColorStop(0, "#8EE87200")
+      light.addColorStop(.27, "rgba(142,232,114,0.10)")
+      light.addColorStop(.66, "#8EE87212")
+      light.addColorStop(1, "#8EE87200")
+      ctx.fillStyle = light
+      ctx.beginPath()
+      ctx.moveTo(7, -3)
+      ctx.quadraticCurveTo(45, -15, 82, -25)
+      ctx.quadraticCurveTo(88, 0, 82, 25)
+      ctx.quadraticCurveTo(45, 15, 7, 3)
+      ctx.closePath()
+      ctx.fill()
+      ctx.restore()
+    },
   }
 }
 
@@ -180,6 +300,7 @@ export function paintSurveillance(ctx: Canvas, threat: Threat, drone: boolean, c
     ctx.lineWidth = 1
     ctx.strokeStyle = "#91A397"
     ctx.stroke()
+    glow(ctx, 9, 0, 16, disabled ? "#8EE87239" : "#EF444475")
     rounded(ctx, 7, -3.2, 4.2, 6.4, 1.1, "#090E0B")
     ctx.strokeStyle = lamp
     ctx.stroke()
@@ -282,11 +403,17 @@ export function paintFindingObject(ctx: Canvas, point: Point, kind: PuzzleKind, 
   ctx.restore()
 }
 
+export function paintFindingLight(ctx: Canvas, point: Point, kind: PuzzleKind, found: boolean) {
+  glow(ctx, point.x, point.y, 45, found ? "#8EE87225" : targetLights[kind])
+}
+
 export function paintCore(ctx: Canvas, point: Point, unlocked: boolean, clock: number) {
   const scale = unlocked ? 1 + Math.sin(clock * 3) * .12 : .82
   ctx.save()
   ctx.translate(point.x, point.y)
-  glow(ctx, 0, 0, unlocked ? 42 : 29, unlocked ? "#8EE87287" : "#8EE87228")
+  glow(ctx, 0, 0, unlocked ? 78 : 61, unlocked ? "#34D39955" : "#34D3992C")
+  glow(ctx, 0, 0, unlocked ? 47 : 32, unlocked ? "#8EE87299" : "#8EE87246")
+  glow(ctx, 0, 0, 17, "#FDE04728")
   ctx.strokeStyle = unlocked ? "#8EE872BB" : "#8EE87255"
   for (const radius of [17, 26]) {
     ctx.save()
@@ -321,10 +448,21 @@ export function paintGateHardware(ctx: Canvas, gate: Rect, unlocked: boolean, cl
       ctx.lineTo(x + index * 3.5, gate.y + gate.h - 3)
       ctx.stroke()
     }
+    const cycle = clock % 2.3
+    if (cycle < .24) {
+      const step = Math.floor(clock / 2.3)
+      const edge = step % 2 === 0 ? gate.y : gate.y + gate.h
+      ctx.globalAlpha = 1 - cycle / .24
+      for (let index = 0; index < 3; index += 1) {
+        const direction = step * 1.9 + index * 2.1
+        disk(ctx, x + Math.cos(direction) * cycle * 41, edge + Math.sin(direction) * cycle * 52, 1, coral)
+      }
+    }
   }
   ctx.shadowBlur = 0
   ctx.globalAlpha = 1
   for (const end of [gate.y, gate.y + gate.h]) {
+    glow(ctx, x, end, 24, unlocked ? "#8EE87247" : "#EF444478")
     rounded(ctx, x - 8, end - 3.5, 16, 7, 2, "#677B6D")
     rounded(ctx, x - 5.5, end - 1.7, 11, 3.4, 1, "#172820")
     disk(ctx, x, end, 1.4, unlocked ? lime : coral)
@@ -333,25 +471,35 @@ export function paintGateHardware(ctx: Canvas, gate: Rect, unlocked: boolean, cl
 }
 
 export function paintDesk(ctx: Canvas, { x, y, w, h }: Rect) {
-  rounded(ctx, x + 3, y + 4, w, h, 3, "#04090670")
-  rounded(ctx, x, y, w, h, 3, "#18241C")
-  ctx.lineWidth = 1
-  ctx.strokeStyle = "#304235"
-  ctx.stroke()
   const center = x + w / 2
+  const warm = (x + y) % 3 === 0
+  glow(ctx, center, y + h / 2, Math.max(36, w * .72), warm ? "#F59E0B2E" : "#34D39923")
+  rounded(ctx, x + 3, y + 4, w, h, 3, "#04090670")
+  const top = ctx.createLinearGradient(x, y, x, y + h)
+  top.addColorStop(0, "#29382F")
+  top.addColorStop(1, "#18241C")
+  ctx.fillStyle = top
+  ctx.beginPath()
+  ctx.roundRect(x, y, w, h, 3)
+  ctx.fill()
+  ctx.lineWidth = 1
+  ctx.strokeStyle = rim
+  ctx.stroke()
   rounded(ctx, center - 11, y + 5, 22, 10, 2, "#3E5547")
-  rounded(ctx, center - 9, y + 6, 18, 7, 1, "#668A6C43")
-  ctx.fillStyle = "#879D83"
+  glow(ctx, center, y + 10, 20, warm ? "#F59E0B65" : "#34D39967")
+  rounded(ctx, center - 9, y + 6, 18, 7, 1, warm ? "#F59E0B55" : "#34D39955")
+  ctx.fillStyle = warm ? "#FDE047B2" : "#8EE872B2"
   ctx.fillRect(center - 7, y + 8, 8, 1)
   ctx.fillStyle = "#39483D"
   ctx.fillRect(center - 7, y + 18, 14, 4)
   rounded(ctx, center - 8, y + h - 2, 16, 11, 3, "#293D30")
+  ctx.stroke()
   rounded(ctx, center - 9, y + h + 5, 18, 4, 2, "#486054")
 }
 
 export function paintPlants(ctx: Canvas) {
   for (const [x, y] of [[55, 300], [327, 477], [917, 245]] as const) {
-    disk(ctx, x + 2, y + 2, 9, "#0006")
+    disk(ctx, x + 2, y + 3, 10, "#0009")
     disk(ctx, x, y, 7, "#39362B")
     ctx.save()
     ctx.translate(x, y)
@@ -359,11 +507,29 @@ export function paintPlants(ctx: Canvas) {
       ctx.rotate(fullTurn / 5)
       ctx.beginPath()
       ctx.ellipse(4, 0, 6, 2.6, .14, 0, fullTurn)
-      ctx.fillStyle = leaf % 2 ? "#225340" : "#326A4C"
+      ctx.fillStyle = leaf % 2 ? "#1E5B3A" : "#2E8555"
       ctx.fill()
     }
     ctx.restore()
   }
+}
+
+export function paintRack(ctx: Canvas, { x, y, w, h }: Rect) {
+  ctx.save()
+  rounded(ctx, x + 2.5, y + 3.5, w, h, 3, "#030705C9")
+  rounded(ctx, x, y, w, h, 3, "#1C2A22")
+  ctx.strokeStyle = rim
+  ctx.lineWidth = 1
+  ctx.stroke()
+  rounded(ctx, x + 3, y + 3, w - 6, h - 6, 2, "#0D120F")
+  ctx.strokeStyle = "#34D39922"
+  for (let offset = 8; offset < h - 4; offset += 9) {
+    ctx.beginPath()
+    ctx.moveTo(x + 5, y + offset)
+    ctx.lineTo(x + w - 12, y + offset)
+    ctx.stroke()
+  }
+  ctx.restore()
 }
 
 export function paintRackLights(ctx: Canvas, racks: Rect[], clock: number) {
@@ -372,9 +538,14 @@ export function paintRackLights(ctx: Canvas, racks: Rect[], clock: number) {
     for (let offset = 9; offset < h - 7; offset += 9) {
       const indicator = index * 1.7 + offset
       const rate = .66 + (offset % 5) * .23
-      ctx.globalAlpha = .34 + .57 * (.5 + .5 * Math.sin(clock * rate + indicator))
-      ctx.fillStyle = (index + offset / 9) % 4 === 0 ? amber : lime
-      ctx.fillRect(x + w - 7, y + offset, 1.8, 1.8)
+      const slot = (index * 3 + offset / 9) % 13
+      const color = slot === 7 ? coral : slot % 4 === 0 ? amber : lime
+      const pulse = .5 + .5 * Math.sin(clock * rate + indicator)
+      ctx.globalAlpha = slot === 7 ? .16 + .84 * pulse ** 6 : .44 + .56 * pulse
+      ctx.shadowColor = color
+      ctx.shadowBlur = 4
+      ctx.fillStyle = color
+      ctx.fillRect(x + w - 7, y + offset, 2, 2)
     }
   })
   ctx.restore()

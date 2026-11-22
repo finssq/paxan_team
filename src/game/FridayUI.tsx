@@ -1,5 +1,6 @@
 import { ArrowRight, Check, CircleAlert, Flame, Pause, Play, RotateCcw, ShieldCheck, Snowflake, Timer } from "lucide-react"
 import { useEffect, useId, useRef, useState } from "react"
+import { PlayerNicknameField } from "../components/PlayerNicknameField"
 import { friday, fridayChapter } from "../data/friday"
 import type { WaveScenario } from "../data/friday"
 import { releaseFindings, storyCopy, storyForWave } from "../data/story"
@@ -101,9 +102,10 @@ export function AllowedHosts({ hosts }: Pick<WaveScenario, "hosts">) {
   )
 }
 
-export function FridayBrief({ phase, run, waveNumber, waveCount, practice, scenario, finalReport, epilogue, onAction, onReset, onSkip }: {
+export function FridayBrief({ phase, run, waveNumber, waveCount, practice, scenario, finalReport, epilogue, playerNickname, nickname, onAction, onReset, onSkip }: {
   phase: Exclude<WavePhase, "live">; run: WaveRun; waveNumber: number; waveCount: number; finalReport: boolean
   practice: boolean; scenario: WaveScenario; epilogue: readonly Message[]
+  playerNickname: string; nickname?: { value: string; onChange: (value: string) => void }
   onAction: () => void; onReset: () => void; onSkip?: () => void
 }) {
   const dialog = useRef<HTMLDialogElement>(null)
@@ -142,7 +144,7 @@ export function FridayBrief({ phase, run, waveNumber, waveCount, practice, scena
       {phase !== "paused" && <span className="friday-brief-wave">{fridayChapter.title} · {finalReport ? storyCopy.summaryTitle :
         practice ? "Пробная волна" : `Волна ${waveNumber}/${waveCount} · ${scenario.ticket.title}`}</span>}
       {phase !== "ready" && !finalReport && <Icon size={34} aria-hidden="true" />}
-      <h2 id="friday-brief-title">{finalReport ? storyCopy.finaleTitle : practice ? phase === "won" ? "Вы прошли обучение" : "Познакомься с твоей командой" : phase === "ready" ? scene.title : heading}</h2>
+      <h2 id="friday-brief-title" className="wrap-anywhere">{finalReport ? `${storyCopy.finaleTitle} · ${playerNickname}` : practice ? phase === "won" ? "Вы прошли обучение" : "Познакомься с твоей командой" : phase === "ready" ? scene.title : heading}</h2>
       {phase === "ready" && practice ? <>
         <TrainingTeamCards />
         <p>Ты стажёр по кибербезопасности. До вечернего запуска Денису нужно проверить обновление сервиса оплаты.</p>
@@ -193,6 +195,7 @@ export function FridayBrief({ phase, run, waveNumber, waveCount, practice, scena
         <Portrait message={{ author: "mentor", mood: "approve" }} />
         <div className="friday-brief-messages"><strong>Макс</strong><p>{storyCopy.officeTeaser}</p></div>
       </div>}
+      {nickname && <PlayerNicknameField placeholder="Например, Ghost_01" {...nickname} />}
       <div className="friday-brief-actions">
         <button type="button" className="os-primary os-training-action" onClick={onAction}>
           {outcome && <RotateCcw size={17} aria-hidden="true" />}

@@ -644,6 +644,44 @@ function paintGate(ctx: CanvasRenderingContext2D, run: Run, unlocked: boolean) {
   paintLabel(ctx, "ЯДРО БАНКА", core.x, core.y + 40)
 }
 
+function paintGuideArrow(ctx: Canvas, point: Point, angle: number, opacity: number) {
+  ctx.save()
+  ctx.translate(point.x, point.y)
+  ctx.rotate(angle)
+  ctx.globalAlpha = opacity
+  ctx.fillStyle = lime
+  ctx.strokeStyle = "#0B1710"
+  ctx.lineWidth = 1.6
+  ctx.beginPath()
+  ctx.moveTo(9, 0)
+  ctx.lineTo(-5, -6)
+  ctx.lineTo(-2, 0)
+  ctx.lineTo(-5, 6)
+  ctx.closePath()
+  ctx.fill()
+  ctx.stroke()
+  ctx.restore()
+}
+
+function paintObjectiveMarker(ctx: Canvas, objective: Point, clock: number) {
+  const { x, y } = objective
+  const bob = Math.sin(clock * 4.6) * 3
+  const tip = y - 34 + bob
+  ctx.save()
+  ctx.font = `bold 11px ${mono}`
+  const width = ctx.measureText("ЦЕЛЬ").width + 14
+  fillRound(ctx, x - width / 2, tip - 28, width, 17, 5, lime)
+  ctx.strokeStyle = "#0B1710"
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+  ctx.fillStyle = "#10200B"
+  ctx.textAlign = "center"
+  ctx.textBaseline = "middle"
+  ctx.fillText("ЦЕЛЬ", x, tip - 19)
+  ctx.restore()
+  paintGuideArrow(ctx, { x, y: tip - 8 }, Math.PI / 2, 1)
+}
+
 export function createRenderer(ctx: CanvasRenderingContext2D) {
   const floor = makeMapLayer(paintFloor)
   const furniture = makeMapLayer(paintFurniture)
@@ -652,7 +690,7 @@ export function createRenderer(ctx: CanvasRenderingContext2D) {
   let walkPhase = 0
   let facing: 1 | -1 = 1
 
-  return (run: Run, displayWidth: number, touchControls: boolean, playerNickname: string) => {
+  return (run: Run, displayWidth: number, playerNickname: string, reduceMotion: boolean) => {
     const { width, height } = ctx.canvas
     const zoomed = displayWidth < 620 && run.phase !== "briefing"
     const scale = zoomed
@@ -691,27 +729,17 @@ export function createRenderer(ctx: CanvasRenderingContext2D) {
 
     const unlocked = run.scanned.length === findings.length
     paintGate(ctx, run, unlocked)
-    const objective = unlocked ? (run.agent.x < gate.x ? gateApproach : core)
+    const objective = unlocked ? core
       : findings.find(finding => finding.puzzle === nextObjective(run.events))
-    if ((zoomed || unlocked) && objective) {
-      const x = clamp(objective.x, left + 27, left + viewWidth - 27)
-      const y = clamp(objective.y, top + 32, top + viewHeight - 38)
-      if (x !== objective.x || y !== objective.y || (unlocked && objective === gateApproach)) {
-        ctx.save()
-        ctx.translate(x, y)
-        ctx.rotate(Math.atan2(objective.y - run.agent.y, objective.x - run.agent.x))
-        ctx.fillStyle = lime
-        ctx.strokeStyle = "#0b1710"
-        ctx.lineWidth = 2
-        ctx.beginPath()
-        ctx.moveTo(8, 0)
-        ctx.lineTo(-6, -6)
-        ctx.lineTo(-3, 0)
-        ctx.lineTo(-6, 6)
-        ctx.closePath()
-        ctx.fill()
-        ctx.stroke()
-        ctx.restore()
+    if (run.phase === "playing" && objective) {
+      paintObjectiveMarker(ctx, objective, reduceMotion ? 0 : run.visualTime)
+      const routePoint = unlocked && x < gate.x ? gateApproach : objective
+      const dx = routePoint.x - x
+      const dy = routePoint.y - y
+      const angle = Math.atan2(dy, dx)
+      if (zoomed && (objective.x < left || objective.x > left + viewWidth || objective.y < top || objective.y > top + viewHeight)) {
+        const edge = { x: clamp(routePoint.x, left + 24, left + viewWidth - 24), y: clamp(routePoint.y, top + 64, top + viewHeight - 58) }
+        paintGuideArrow(ctx, edge, angle, .88)
       }
     }
 
@@ -757,19 +785,9 @@ export function createRenderer(ctx: CanvasRenderingContext2D) {
     }
     ctx.globalAlpha = 1
 
-    if (!run.moved && run.phase === "playing") {
-      ctx.font = `bold 13px ${mono}`
-      ctx.textAlign = "left"
-      const hint = touchControls ? "Веди джойстик" : "WASD — идти"
-      ctx.fillStyle = "#101512ed"
-      ctx.fillRect(x - 16, y - 48, ctx.measureText(hint).width + 16, 23)
-      ctx.fillStyle = mint
-      ctx.fillText(hint, x - 8, y - 32)
-    }
-
     const target = findings[run.focus]
     if (target && run.phase === "playing") {
-      return { x: (target.x - left) / viewWidth, y: (target.y - top - 17) / viewHeight }
+      return { x: (target.x - left) / viewWidth, y: (target.y - top) / viewHeight }
     }
   }
 }

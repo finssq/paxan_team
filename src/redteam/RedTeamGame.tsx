@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowRight, Check, Crosshair, Flame, Home, MessageCircle, RotateCcw, ScanLine, ShieldCheck, Smartphone, Volume2, VolumeX, Zap } from "lucide-react"
+import { ArrowLeft, ArrowRight, Check, Crosshair, Flame, Home, LockOpen, MessageCircle, RotateCcw, ScanLine, ShieldCheck, Smartphone, TriangleAlert, Volume2, VolumeX, Zap } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent, PointerEvent } from "react"
 import type { createSfx } from "../audio/sfx"
@@ -30,6 +30,20 @@ const movement = new Map([
 const neutral = { x: 0, y: 0 }
 const portraitQuery = "(max-width: 899px) and (orientation: portrait)"
 const touchQuery = "(pointer: coarse), (max-width: 619px), (orientation: landscape) and (max-height: 540px)"
+const mapInstructions = [
+  ["Подойди на WASD к «Гостевому Wi-Fi» и нажми E", "Подойди к «Гостевому Wi-Fi» и нажми «Взломать»"],
+  ["Обойди камеры и взломай «Ноутбук» в офисе (E)", "Обойди камеры и нажми «Взломать» у ноутбука"],
+  ["Проберись в IT-зону к «Стикеру» и нажми E", "Подойди к «Стикеру» в IT-зоне и нажми «Взломать»"],
+  ["Шлюз открыт! Беги в серверную к «Ядру банка»", "Шлюз открыт! Беги в серверную к «Ядру банка»"],
+] as const
+type MapNotice = { kind: "controls" | "detected" | "unlocked" } | { kind: "success"; count: number }
+const mapPopMotion = `
+  @keyframes wl-map-guide-pop {
+    from { opacity: .55; transform: translateY(4px) scale(.97); }
+    65% { opacity: 1; transform: translateY(-2px) scale(1.015); }
+    to { transform: translateY(0) scale(1); }
+  }
+`
 const portraitKey = "worklab.redteam.portrait"
 const difficultyStyles = {
   intern: { Icon: ShieldCheck, accent: "[--difficulty-accent:#8EE872]", description: "Базовые взломы · Спокойная охрана" },
@@ -65,9 +79,38 @@ function snapshot(run: Run) {
   return {
     phase: run.phase, time: Math.floor(run.time), elapsed: run.time, charges: run.charges, alert: Math.round(run.alert * 100),
     exposed: run.exposed, alerts: run.alerts, count: run.scanned.length, focus: run.focus,
-    toast: run.toast && run.clock < run.toast.until ? run.toast.index : -1,
     events: run.events, score: run.score, items: run.collected.length, difficulty: run.difficulty,
   }
+}
+
+function MapGuide({ count, notice, touch }: { count: number; notice: MapNotice | null; touch: boolean }) {
+  const step = Math.min(count, mapInstructions.length - 1)
+  const guide = notice && (notice.kind === "detected"
+    ? { Icon: TriangleAlert, color: "border-[#EF4444]/60 text-[#FFD399]", text: touch
+      ? "Тебя заметила охрана! Спрячься за стеной или нажми EMP"
+      : "Тебя заметила охрана! Спрячься за стеной или жми пробел (EMP)" }
+    : notice.kind === "unlocked"
+      ? { Icon: LockOpen, color: "border-[#F59E0B]/65 text-[#FDE8A1]", text: "Шлюз в серверную открыт! Доберись до Ядра банка" }
+      : { Icon: notice.kind === "success" ? Check : Crosshair, color: "border-[#8EE872]/50 text-[#BAF7A7]", text: notice.kind === "success"
+        ? `Взлом выполнен (${notice.count}/3)! Двигайся к следующей отмеченной цели`
+        : touch ? "Управление: джойстик — идти · Обходи лучи камер · «Взломать» у цели"
+          : "Управление: WASD / стрелки — идти · Обходи красные лучи камер · E — взлом" })
+  return (
+    <>
+      <div className="pointer-events-none absolute inset-x-2 top-3 z-20 flex justify-center" role="status">
+        <div key={step} className="flex max-w-full items-center gap-2 rounded-full border border-[#8EE872]/45 bg-[#0B110E]/92 px-3 py-1.5 text-xs leading-snug font-medium text-white shadow-[0_8px_24px_rgba(0,0,0,0.55)] backdrop-blur-md motion-safe:animate-[wl-map-guide-pop_.28s_ease-out] sm:px-4 sm:text-sm">
+          <span className="size-2 shrink-0 rounded-full bg-[#8EE872] motion-safe:animate-pulse" aria-hidden="true" />
+          <span><strong className="whitespace-nowrap text-[#BDF4AD]">Шаг {step + 1}/4</strong> · {mapInstructions[step]![touch ? 1 : 0]}</span>
+        </div>
+      </div>
+      <div className="pointer-events-none absolute inset-x-2 bottom-3 z-20 flex justify-center" role="status">
+        {guide && <div key={notice?.kind === "success" ? notice.count : notice?.kind} className={`flex items-center gap-2 rounded-xl border bg-[#0B110E]/95 px-3 py-1.5 text-xs leading-snug font-bold shadow-[0_8px_24px_rgba(0,0,0,0.55)] backdrop-blur-md motion-safe:animate-[wl-map-guide-pop_.3s_ease-out] sm:text-sm ${guide.color}`}>
+          <guide.Icon size={16} className="shrink-0" aria-hidden="true" />
+          <span>{guide.text}</span>
+        </div>}
+      </div>
+    </>
+  )
 }
 
 function formatTime(time: number) {
@@ -106,7 +149,7 @@ function DifficultyPicker({ value, onChange, compact = false }: {
                       <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-(--difficulty-accent)/12 text-(--difficulty-accent)">
                         <Icon size={18} aria-hidden="true" />
                       </span>
-                      <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1 sm:w-full">
+                      <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1 sm:w-full [@media(orientation:landscape)_and_(max-height:430px)]:w-auto">
                         <strong className="text-sm leading-tight sm:text-base">{level.label}</strong>
                         {id === "agent" && <span className="rounded-full bg-[#F59E0B]/14 px-1.5 py-0.5 text-[10px] leading-tight font-bold text-[#F6BD5B]">Баланс</span>}
                       </span>
@@ -350,6 +393,8 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
   const [seen, setSeen] = useState(0)
   const [attempt, setAttempt] = useState(0)
   const [caughtByTrap, setCaughtByTrap] = useState(false)
+  const [mapNotice, setMapNotice] = useState<MapNotice | null>(null)
+  const [touchMode, setTouchMode] = useState(() => window.matchMedia(touchQuery).matches)
   const [portrait, setPortrait] = useState(() => window.matchMedia(portraitQuery).matches)
   const [portraitSkipped, setPortraitSkipped] = useState(readPortraitPreference)
   const [dismissedPush, setDismissedPush] = useState("")
@@ -372,6 +417,7 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
     preparedPuzzles.current = null
     run.current = createRun("playing", next.difficulty)
     setPuzzles(next)
+    setMapNotice({ kind: "controls" })
     setSeen(0)
     setAttempt(value => value + 1)
     setHud(snapshot(run.current))
@@ -415,10 +461,20 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
   }
 
   function handleHackSuccess() {
-    if (!run.current) return
-    finishHack(run.current, audio.play)
-    setHud(snapshot(run.current))
+    const current = run.current
+    if (!current) return
+    const previousCount = current.scanned.length
+    finishHack(current, audio.play)
+    const count = current.scanned.length
+    if (count > previousCount) setMapNotice(count === findings.length ? { kind: "unlocked" } : { kind: "success", count })
+    setHud(snapshot(current))
   }
+
+  useEffect(() => {
+    if (!mapNotice) return
+    const timer = window.setTimeout(() => setMapNotice(null), 3800)
+    return () => window.clearTimeout(timer)
+  }, [mapNotice])
 
   const closePhone = useCallback(() => {
     phoneActive.current = false
@@ -517,6 +573,11 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
     let lastHud = 0
     let lastPhase: Phase = "briefing"
     let lastDpr = 0
+    let warnedRun: Run | null = null
+
+    function syncTouchMode() {
+      setTouchMode(touchControls.matches)
+    }
 
     function resize() {
       const node = canvas.current
@@ -561,6 +622,10 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
       const dt = previous ? Math.min(.033, (now - previous) / 1000) : 0
       previous = now
       if (!phoneActive.current && !rotateActive.current && !document.hidden) stepRun(current, dt, vector, playStepEffect)
+      if (current.phase === "playing" && current.exposed && current.alert > .15 && warnedRun !== current) {
+        warnedRun = current
+        setMapNotice({ kind: "detected" })
+      }
       if (current.shake > lastShake && !reducedMotion.matches) {
         element?.animate([
           { transform: "translate(0, 0)" },
@@ -577,10 +642,13 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
         lastPhase = current.phase
         lastHud = now
       }
-      const target = paint(current, desktop.matches ? mapSize.width : displayWidth, touchControls.matches, nicknameOnCanvas.current)
+      const target = paint(current, desktop.matches ? mapSize.width : displayWidth, nicknameOnCanvas.current, reducedMotion.matches)
       if (target && mapAction.current) {
-        mapAction.current.style.left = `${canvasLeft + target.x * displayWidth}px`
-        mapAction.current.style.top = `${canvasTop + target.y * displayHeight}px`
+        const side = target.x < .5 ? 1 : -1
+        const inset = mapAction.current.offsetWidth / 2 + 6
+        const center = Math.max(inset, Math.min(displayWidth - inset, target.x * displayWidth + side * (inset + 20)))
+        mapAction.current.style.left = `${canvasLeft + center}px`
+        mapAction.current.style.top = `${canvasTop + Math.max(56, Math.min(displayHeight - 50, target.y * displayHeight))}px`
       }
       frame = requestAnimationFrame(animate)
     }
@@ -618,6 +686,8 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
     const observer = new ResizeObserver(resize)
     observer.observe(field)
     desktop.addEventListener("change", resize)
+    touchControls.addEventListener("change", syncTouchMode)
+    syncTouchMode()
     resize()
     frame = requestAnimationFrame(animate)
     window.addEventListener("keydown", onKeyDown)
@@ -629,6 +699,7 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
       cancelAnimationFrame(frame)
       observer.disconnect()
       desktop.removeEventListener("change", resize)
+      touchControls.removeEventListener("change", syncTouchMode)
       window.removeEventListener("keydown", onKeyDown)
       window.removeEventListener("keyup", onKeyUp)
       window.removeEventListener("blur", clearInputs)
@@ -659,12 +730,12 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
   const briefing = hud.phase === "briefing"
   const completed = hud.phase === "complete"
   const target = findings[hud.focus]
-  const toast = findings[hud.toast]
   const unread = delivered.length - seen
   const SoundIcon = sound ? Volume2 : VolumeX
 
   return (
     <main className="rt-page" aria-label="Проникновение в офис">
+      <style>{mapPopMotion}</style>
       <div className="rt-shell" inert={rotateRequired || briefing || completed}>
         <header className="rt-header" inert={hacking}>
           <a className="inline-flex shrink-0 cursor-pointer transition-opacity hover:opacity-85" href="#home" title="На главную" aria-label="WorkLab — на главную">
@@ -725,16 +796,12 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
           <div className="rt-field" data-briefing={briefing} data-exposed={hud.exposed} inert={hacking}>
             <canvas ref={canvas} tabIndex={playing ? 0 : -1} aria-label="Карта офиса банка" />
             <div className="rt-vignette" aria-hidden="true" />
-            {playing && target && <button className="rt-map-action" ref={mapAction} type="button" onClick={enterHack}>
-              <kbd>E</kbd> Взломать
+            {playing && <MapGuide count={hud.count} notice={mapNotice} touch={touchMode} />}
+            {playing && target && <button className="absolute top-1/2 left-1/2 z-20 min-h-9 -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-lg border border-[#D1FFB9] bg-[#8EE872] px-2.5 py-1.5 text-xs font-extrabold whitespace-nowrap text-[#0D120F] shadow-[0_3px_0_#42783C,0_7px_18px_rgba(0,0,0,0.65)] hover:bg-[#AEF89A] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white sm:text-sm"
+              ref={mapAction} type="button" onClick={enterHack}>
+              {touchMode ? "Взломать" : "Нажми E · Взломать"}
             </button>}
           </div>
-          {playing && toast && (
-            <div className="rt-toast" role="status">
-              <ScanLine size={20} aria-hidden="true" />
-              <div><strong>{toast.label}</strong><p>{toast.detail}{hud.count === findings.length && " Шлюз в серверную открыт."}</p></div>
-            </div>
-          )}
           {hacking && target && puzzles && (
             <HackPuzzleModal key={`${attempt}:${puzzles.difficulty}:${puzzles.variants[target.puzzle].id}`}
               variant={puzzles.variants[target.puzzle]} difficulty={puzzles.difficulty} label={target.short} alert={hud.alert} play={audio.play} paused={rotateRequired || hidden}
@@ -795,7 +862,7 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
         <div className={missionOverlay}>
           <section className={missionDialog} role="dialog" aria-modal="true" aria-labelledby="rt-briefing-title">
             <div className="h-1.5 bg-linear-to-r from-[#8EE872] to-emerald-400" aria-hidden="true" />
-            <form className="grid gap-3 p-3.5 sm:p-5 [@media(max-height:430px)]:gap-2.5 [@media(max-height:430px)]:p-3" onSubmit={event => {
+            <form className="grid gap-3 p-3.5 sm:p-5 [@media(max-height:430px)]:gap-2 [@media(max-height:430px)]:p-3 [@media(orientation:landscape)_and_(max-height:430px)_and_(min-width:640px)]:grid-cols-[minmax(0,1.25fr)_minmax(17rem,1fr)]" onSubmit={event => {
               event.preventDefault()
               startOperation()
             }}>
@@ -804,9 +871,13 @@ export default function RedTeamGame({ audio, difficulty, onDifficulty, onComplet
                 <h2 id="rt-briefing-title" className="mt-1 text-xl leading-tight font-extrabold sm:text-2xl">Проникновение в офис</h2>
                 <p className="mt-2 text-sm leading-snug text-[#CFDCD0] [@media(max-height:430px)]:mt-1 [@media(max-height:430px)]:text-xs">Пятничный релиз спасён. Теперь выясни, как «Призрак» узнал внутренние адреса банка. Начни с гостевого Wi-Fi и проверь журнал Ядра.</p>
               </header>
-              <PlayerNicknameField hint="Виден над персонажем" placeholder="Например, Ghost_01" value={nicknameDraft} onChange={setNicknameDraft} />
-              <DifficultyPicker value={difficulty} onChange={changeDifficulty} />
-              <div className="flex items-center justify-between gap-3 border-t border-white/[0.08] pt-4 [@media(max-height:430px)]:pt-2">
+              <div className="min-w-0 self-center">
+                <PlayerNicknameField hint="Виден над персонажем" placeholder="Например, Ghost_01" value={nicknameDraft} onChange={setNicknameDraft} />
+              </div>
+              <div className="col-span-full">
+                <DifficultyPicker value={difficulty} onChange={changeDifficulty} />
+              </div>
+              <div className="col-span-full flex items-center justify-between gap-3 border-t border-white/[0.08] pt-4 [@media(max-height:430px)]:pt-2">
                 <a className={`${missionBack} px-2 sm:px-3`} href="#game"><ArrowLeft size={15} className="shrink-0" aria-hidden="true" /> К выбору игр</a>
                 <button className={`${missionPrimary} sm:px-5`} ref={primary} type="submit">Начать операцию →</button>
               </div>
